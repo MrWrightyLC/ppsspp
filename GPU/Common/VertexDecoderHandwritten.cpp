@@ -16,11 +16,29 @@
 #endif
 #endif
 
-
 // Candidates for hand-writing
 // (found using our custom Very Sleepy).
 // GPU::P:_f_N:_s8_C:_8888_T:_u16__(24b)_040001BE  (5%+ of God of War execution)
 // GPU::P:_f_N:_s8_C:_8888_T:_u16_W:_f_(1x)__(28b)_040007BE (1%+ of God of War execution)
+
+// Tekken 6:
+// (found using the vertex counter that's active in _DEBUG)
+// [04000111] P: s16 C: 565 T: u8  (10b) (736949)    // Also in Midnight Club
+
+// Wipeout Pure:
+// [0400013f] P: s16 N: s8 C: 8888 T: f  (24b) (1495430)
+
+// Flatout:
+// [04000122] P: s16 N: s8 T: u16  (14b) (3901754)
+// [04000116] P: s16 C: 5551 T: u16  (12b) (2225841)
+
+// Test drive:
+// [05000100] P: s16  (6b) (2827872)
+// [050011ff] P: f N: f C: 8888 T: f I: u16  (36b) (3812112)
+
+// Burnout Dominator:
+// [04000122] P: s16 N: s8 T: u16  (14b) (1710813)
+// [04000116] P: s16 C: 5551 T: u16  (12b) (7688298)
 
 // This is the first GoW one.
 void VtxDec_Tu16_C8888_Pfloat(const u8 *srcp, u8 *dstp, int count, const UVScale *uvScaleOffset) {
@@ -220,7 +238,7 @@ void VtxDec_Tu8_C5551_Ps16(const u8 *srcp, u8 *dstp, int count, const UVScale *u
 		float32x4_t pos1_ext = vmulq_f32(vcvtq_f32_s32(pos1_32), posScale);
 
 		uint64x1_t uv8_one = vdup_n_u64(uv0);
-		uint8x8_t uv8 = vreinterpret_s8_u64(uv8_one);
+		uint8x8_t uv8 = vreinterpret_u8_u64(uv8_one);
 		uint16x4_t uv16 = vget_low_u16(vmovl_u8(uv8));
 		uint32x4_t uv32 = vmovl_u16(uv16);
 		float32x4_t uvf = vaddq_f32(vmulq_f32(vcvtq_f32_u32(uv32), uvScale), uvOffset);
