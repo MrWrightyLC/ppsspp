@@ -1048,6 +1048,19 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 		screenManager()->push(langScreen);
 		return UI::EVENT_DONE;
 	});
+
+#if PPSSPP_PLATFORM(IOS)
+	static const char *indicator[] = {
+		"Swipe once to switch app (indicator auto-hides)",
+		"Swipe twice to switch app (indicator stays visible)"
+	};
+	PopupMultiChoice *switchMode = systemSettings->Add(new PopupMultiChoice(&g_Config.iAppSwitchMode, sy->T("App switching mode"), indicator, 0, ARRAY_SIZE(indicator), I18NCat::SYSTEM, screenManager()));
+	switchMode->OnChoice.Add([](EventParams &e) {
+		System_Notify(SystemNotification::APP_SWITCH_MODE_CHANGED);
+		return UI::EVENT_DONE;
+	});
+#endif
+
 	systemSettings->Add(new CheckBox(&g_Config.bUISound, sy->T("UI Sound")));
 	const Path bgPng = GetSysDirectory(DIRECTORY_SYSTEM) / "background.png";
 	const Path bgJpg = GetSysDirectory(DIRECTORY_SYSTEM) / "background.jpg";
@@ -1253,8 +1266,8 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 	static const char *buttonPref[] = { "Use O to confirm", "Use X to confirm" };
 	systemSettings->Add(new PopupMultiChoice(&g_Config.iButtonPreference, sy->T("Confirmation Button"), buttonPref, 0, ARRAY_SIZE(buttonPref), I18NCat::SYSTEM, screenManager()));
 
-	systemSettings->Add(new ItemHeader(sy->T("Recording")));
 #if defined(_WIN32) || (defined(USING_QT_UI) && !defined(MOBILE_DEVICE))
+	systemSettings->Add(new ItemHeader(sy->T("Recording")));
 	systemSettings->Add(new CheckBox(&g_Config.bDumpFrames, sy->T("Record Display")));
 	systemSettings->Add(new CheckBox(&g_Config.bUseFFV1, sy->T("Use Lossless Video Codec (FFV1)")));
 	systemSettings->Add(new CheckBox(&g_Config.bDumpVideoOutput, sy->T("Use output buffer (with overlay) for recording")));
@@ -1272,6 +1285,9 @@ void GameSettingsScreen::CreateVRSettings(UI::ViewGroup *vrSettings) {
 	vrSettings->Add(new CheckBox(&g_Config.bEnableVR, vr->T("Virtual reality")));
 	vrSettings->Add(new CheckBox(&g_Config.bEnable6DoF, vr->T("6DoF movement")));
 	vrSettings->Add(new CheckBox(&g_Config.bEnableStereo, vr->T("Stereoscopic vision (Experimental)")));
+	CheckBox* antiFlickering = new CheckBox(&g_Config.bAntiFlickeringFlow, vr->T("Anti-flickering flow"));
+	antiFlickering->SetEnabledPtr(&g_Config.bEnableVR);
+	vrSettings->Add(antiFlickering);
 	vrSettings->Add(new CheckBox(&g_Config.bForce72Hz, vr->T("Force 72Hz update")));
 	if (IsPassthroughSupported()) {
 		vrSettings->Add(new CheckBox(&g_Config.bPassthrough, vr->T("Enable passthrough")));
@@ -1295,8 +1311,6 @@ void GameSettingsScreen::CreateVRSettings(UI::ViewGroup *vrSettings) {
 	vrSettings->Add(new CheckBox(&g_Config.bEnableMotions, vr->T("Map controller movements to keys")));
 	PopupSliderChoiceFloat *vrMotions = vrSettings->Add(new PopupSliderChoiceFloat(&g_Config.fMotionLength, 0.3f, 1.0f, 0.5f, vr->T("Motion needed to generate action"), 0.1f, screenManager(), vr->T("m")));
 	vrMotions->SetEnabledPtr(&g_Config.bEnableMotions);
-	static const char *cameraPitchModes[] = { "Disabled", "Top view -> First person", "First person -> Top view" };
-	vrSettings->Add(new PopupMultiChoice(&g_Config.iCameraPitch, vr->T("Camera type"), cameraPitchModes, 0, 3, I18NCat::NONE, screenManager()));
 }
 
 UI::EventReturn GameSettingsScreen::OnAutoFrameskip(UI::EventParams &e) {
@@ -1305,10 +1319,10 @@ UI::EventReturn GameSettingsScreen::OnAutoFrameskip(UI::EventParams &e) {
 }
 
 UI::EventReturn GameSettingsScreen::OnScreenRotation(UI::EventParams &e) {
-	INFO_LOG(SYSTEM, "New display rotation: %d", g_Config.iScreenRotation);
-	INFO_LOG(SYSTEM, "Sending rotate");
+	INFO_LOG(Log::System, "New display rotation: %d", g_Config.iScreenRotation);
+	INFO_LOG(Log::System, "Sending rotate");
 	System_Notify(SystemNotification::ROTATE_UPDATED);
-	INFO_LOG(SYSTEM, "Got back from rotate");
+	INFO_LOG(Log::System, "Got back from rotate");
 	return UI::EVENT_DONE;
 }
 
@@ -1539,7 +1553,7 @@ void GameSettingsScreen::CallbackMemstickFolder(bool yes) {
 		File::Delete(Path(testWriteFile));
 
 		if (!File::WriteDataToFile(true, pendingMemstickFolder_.c_str(), pendingMemstickFolder_.size(), memstickDirFile)) {
-			WARN_LOG(SYSTEM, "Failed to write memstick folder to '%s'", memstickDirFile.c_str());
+			WARN_LOG(Log::System, "Failed to write memstick folder to '%s'", memstickDirFile.c_str());
 		} else {
 			// Save so the settings, at least, are transferred.
 			g_Config.memStickDirectory = Path(pendingMemstickFolder_);
@@ -1877,6 +1891,9 @@ void DeveloperToolsScreen::CreateViews() {
 	ffMode->SetEnabledFunc([]() { return !g_Config.bVSync; });
 	ffMode->HideChoice(1);  // not used
 
+	auto displayRefreshRate = list->Add(new PopupSliderChoice(&g_Config.iDisplayRefreshRate, 60, 1000, 60, dev->T("Display refresh rate"), 1, screenManager()));
+	displayRefreshRate->SetFormat(dev->T("%d Hz"));
+
 	Draw::DrawContext *draw = screenManager()->getDrawContext();
 
 	list->Add(new ItemHeader(dev->T("Ubershaders")));
@@ -2041,7 +2058,7 @@ UI::EventReturn DeveloperToolsScreen::OnCopyStatesToRoot(UI::EventParams &e) {
 	for (const File::FileInfo &file : files) {
 		Path src = file.fullName;
 		Path dst = root_dir / file.name;
-		INFO_LOG(SYSTEM, "Copying file '%s' to '%s'", src.c_str(), dst.c_str());
+		INFO_LOG(Log::System, "Copying file '%s' to '%s'", src.c_str(), dst.c_str());
 		File::Copy(src, dst);
 	}
 

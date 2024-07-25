@@ -113,7 +113,7 @@ void RetroAchievementsListScreen::CreateAchievementsTab(UI::ViewGroup *achieveme
 		if (!bucket.num_achievements) {
 			continue;
 		}
-		std::string title = StringFromFormat("%s (%d)", ac->T(AchievementBucketTitle(bucket.bucket_type)), bucket.num_achievements);
+		std::string title = StringFromFormat("%s (%d)", ac->T_cstr(AchievementBucketTitle(bucket.bucket_type)), bucket.num_achievements);
 		CollapsibleSection *section = achievements->Add(new CollapsibleSection(title));
 		section->SetSpacing(2.0f);
 		for (uint32_t j = 0; j < bucket.num_achievements; j++) {
@@ -298,7 +298,8 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 			});
 		} else if (System_GetPropertyBool(SYSPROP_HAS_LOGIN_DIALOG)) {
 			viewGroup->Add(new Choice(di->T("Log in")))->OnClick.Add([=](UI::EventParams &) -> UI::EventReturn {
-				System_AskUsernamePassword(GetRequesterToken(), StringFromFormat("RetroAchievements: %s", di->T("Log in")), [](const std::string &value, int) {
+				std::string title = StringFromFormat("RetroAchievements: %s", di->T_cstr("Log in"));
+				System_AskUsernamePassword(GetRequesterToken(), title, [](const std::string &value, int) {
 					std::vector<std::string> parts;
 					SplitString(value, '\n', parts);
 					if (parts.size() == 2 && !parts[0].empty() && !parts[1].empty()) {

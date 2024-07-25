@@ -82,16 +82,16 @@ bool X64JitBackend::CompileBlock(IRBlockCache *irBlockCache, int block_num, bool
 
 	// Don't worry, the codespace isn't large enough to overflow offsets.
 	const u8 *blockStart = GetCodePointer();
-	block->SetTargetOffset((int)GetOffset(blockStart));
+	block->SetNativeOffset((int)GetOffset(blockStart));
 	compilingBlockNum_ = block_num;
 	lastConstPC_ = 0;
 
 	regs_.Start(irBlockCache, block_num);
 
 	std::vector<const u8 *> addresses;
-	addresses.reserve(block->GetNumInstructions());
+	addresses.reserve(block->GetNumIRInstructions());
 	const IRInst *instructions = irBlockCache->GetBlockInstructionPtr(*block);
-	for (int i = 0; i < block->GetNumInstructions(); ++i) {
+	for (int i = 0; i < block->GetNumIRInstructions(); ++i) {
 		const IRInst &inst = instructions[i];
 		regs_.SetIRIndex(i);
 		addresses.push_back(GetCodePtr());
@@ -115,7 +115,7 @@ bool X64JitBackend::CompileBlock(IRBlockCache *irBlockCache, int block_num, bool
 		JMP(hooks_.crashHandler, true);
 	}
 
-	int len = (int)GetOffset(GetCodePointer()) - block->GetTargetOffset();
+	int len = (int)GetOffset(GetCodePointer()) - block->GetNativeOffset();
 	if (len < MIN_BLOCK_NORMAL_LEN) {
 		// We need at least 10 bytes to invalidate blocks with.
 		ReserveCodeSpace(MIN_BLOCK_NORMAL_LEN - len);
@@ -147,7 +147,7 @@ bool X64JitBackend::CompileBlock(IRBlockCache *irBlockCache, int block_num, bool
 		for (int i = 0; i < (int)addresses.size(); ++i)
 			addressesLookup[addresses[i]] = i;
 
-		INFO_LOG(JIT, "=============== x86 (%08x, %d bytes) ===============", startPC, len);
+		INFO_LOG(Log::JIT, "=============== x86 (%08x, %d bytes) ===============", startPC, len);
 		const IRInst *instructions = irBlockCache->GetBlockInstructionPtr(*block);
 		for (const u8 *p = blockStart; p < GetCodePointer(); ) {
 			auto it = addressesLookup.find(p);
@@ -156,7 +156,7 @@ bool X64JitBackend::CompileBlock(IRBlockCache *irBlockCache, int block_num, bool
 
 				char temp[512];
 				DisassembleIR(temp, sizeof(temp), inst);
-				INFO_LOG(JIT, "IR: #%d %s", it->second, temp);
+				INFO_LOG(Log::JIT, "IR: #%d %s", it->second, temp);
 			}
 
 			auto next = std::next(it);
@@ -164,7 +164,7 @@ bool X64JitBackend::CompileBlock(IRBlockCache *irBlockCache, int block_num, bool
 
 			auto lines = DisassembleX86(p, (int)(nextp - p));
 			for (const auto &line : lines)
-				INFO_LOG(JIT, " X: %s", line.c_str());
+				INFO_LOG(Log::JIT, " X: %s", line.c_str());
 			p = nextp;
 		}
 	}
@@ -321,7 +321,7 @@ void X64JitBackend::ClearAllBlocks() {
 
 void X64JitBackend::InvalidateBlock(IRBlockCache *irBlockCache, int block_num) {
 	IRBlock *block = irBlockCache->GetBlock(block_num);
-	int offset = block->GetTargetOffset();
+	int offset = block->GetNativeOffset();
 	u8 *writable = GetWritablePtrFromCodePtr(GetBasePtr()) + offset;
 
 	// Overwrite the block with a jump to compile it again.

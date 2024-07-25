@@ -126,7 +126,7 @@ void IRNativeRegCacheBase::Start(MIPSComp::IRBlockCache *irBlockCache, int block
 		mr[statics[i].mr].nReg = statics[i].nr;
 		mr[statics[i].mr].isStatic = true;
 		// Lock it until the very end.
-		mr[statics[i].mr].spillLockIRIndex = irBlock_->GetNumInstructions();
+		mr[statics[i].mr].spillLockIRIndex = irBlock_->GetNumIRInstructions();
 	}
 
 	irBlockNum_ = blockNum;
@@ -238,7 +238,7 @@ uint64_t IRNativeRegCacheBase::GetGPR2Imm(IRReg base) {
 void IRNativeRegCacheBase::SetGPRImm(IRReg gpr, uint32_t immVal) {
 	_dbg_assert_(IsValidGPR(gpr));
 	if (gpr == MIPS_REG_ZERO && immVal != 0) {
-		ERROR_LOG_REPORT(JIT, "Trying to set immediate %08x to r0", immVal);
+		ERROR_LOG_REPORT(Log::JIT, "Trying to set immediate %08x to r0", immVal);
 		return;
 	}
 
@@ -387,7 +387,7 @@ IRNativeReg IRNativeRegCacheBase::AllocateReg(MIPSLoc type, MIPSMap flags) {
 	}
 
 	// Uh oh, we have all of them spilllocked....
-	ERROR_LOG_REPORT(JIT, "Out of spillable registers in block PC %08x, index %d", irBlock_->GetOriginalStart(), irIndex_);
+	ERROR_LOG_REPORT(Log::JIT, "Out of spillable registers in block PC %08x, index %d", irBlock_->GetOriginalStart(), irIndex_);
 	_assert_(bestToSpill != -1);
 	return -1;
 }
@@ -434,7 +434,7 @@ bool IRNativeRegCacheBase::IsRegClobbered(MIPSLoc type, IRReg r) const {
 	// We look starting one ahead, unlike spilling.  We want to know if it clobbers later.
 	info.currentIndex = irIndex_ + 1;
 	info.instructions = irBlockCache_->GetBlockInstructionPtr(irBlockNum_);
-	info.numInstructions = irBlock_->GetNumInstructions();
+	info.numInstructions = irBlock_->GetNumIRInstructions();
 
 	// Make sure we're on the first one if this is multi-lane.
 	IRReg first = r;
@@ -461,7 +461,7 @@ bool IRNativeRegCacheBase::IsRegRead(MIPSLoc type, IRReg first) const {
 	// We look starting one ahead, unlike spilling.
 	info.currentIndex = irIndex_ + 1;
 	info.instructions = irBlockCache_->GetBlockInstructionPtr(irBlockNum_);
-	info.numInstructions = irBlock_->GetNumInstructions();
+	info.numInstructions = irBlock_->GetNumIRInstructions();
 
 	// Note: this intentionally doesn't look at the full reg, only the lane.
 	IRUsage usage = GetNextRegUsage(info, type, first);
@@ -478,7 +478,7 @@ IRNativeReg IRNativeRegCacheBase::FindBestToSpill(MIPSLoc type, MIPSMap flags, b
 	info.lookaheadCount = UNUSED_LOOKAHEAD_OPS;
 	info.currentIndex = irIndex_;
 	info.instructions = irBlockCache_->GetBlockInstructionPtr(irBlockNum_);
-	info.numInstructions = irBlock_->GetNumInstructions();
+	info.numInstructions = irBlock_->GetNumIRInstructions();
 
 	*clobbered = false;
 	for (int i = 0; i < allocCount; i++) {
@@ -586,7 +586,7 @@ void IRNativeRegCacheBase::FlushNativeReg(IRNativeReg nreg) {
 	}
 	_dbg_assert_(!mr[nr[nreg].mipsReg].isStatic);
 	if (mr[nr[nreg].mipsReg].isStatic) {
-		ERROR_LOG(JIT, "Cannot FlushNativeReg a statically mapped register");
+		ERROR_LOG(Log::JIT, "Cannot FlushNativeReg a statically mapped register");
 		return;
 	}
 
@@ -708,7 +708,7 @@ void IRNativeRegCacheBase::FlushAll(bool gprs, bool fprs) {
 			} else if (mr[i].loc == MIPSLoc::REG_IMM) {
 				// The register already contains the immediate.
 				if (nr[nreg].pointerified) {
-					ERROR_LOG(JIT, "RVREG_IMM but pointerified. Wrong.");
+					ERROR_LOG(Log::JIT, "RVREG_IMM but pointerified. Wrong.");
 					nr[nreg].pointerified = false;
 				}
 				mr[i].loc = MIPSLoc::REG;
@@ -746,7 +746,7 @@ void IRNativeRegCacheBase::FlushAll(bool gprs, bool fprs) {
 	// Sanity check
 	for (int i = 0; i < config_.totalNativeRegs; i++) {
 		if (nr[i].mipsReg != IRREG_INVALID && !mr[nr[i].mipsReg].isStatic) {
-			ERROR_LOG_REPORT(JIT, "Flush fail: nr[%i].mipsReg=%i", i, nr[i].mipsReg);
+			ERROR_LOG_REPORT(Log::JIT, "Flush fail: nr[%i].mipsReg=%i", i, nr[i].mipsReg);
 		}
 	}
 }
@@ -911,6 +911,7 @@ void IRNativeRegCacheBase::MappingFromInst(const IRInst &inst, Mapping mapping[3
 		case '\0':
 		case '_':
 		case 'C':
+		case 'r':
 		case 'I':
 		case 'v':
 		case 's':
@@ -1030,7 +1031,7 @@ void IRNativeRegCacheBase::MapNativeReg(MIPSLoc type, IRNativeReg nreg, IRReg fi
 							info.lookaheadCount = 16;
 							info.currentIndex = irIndex_;
 							info.instructions = irBlockCache_->GetBlockInstructionPtr(irBlockNum_);
-							info.numInstructions = irBlock_->GetNumInstructions();
+							info.numInstructions = irBlock_->GetNumIRInstructions();
 
 							IRReg basefpr = first - oldlane - 32;
 							clobbered = true;
@@ -1216,7 +1217,7 @@ IRNativeReg IRNativeRegCacheBase::MapNativeRegAsPointer(IRReg gpr) {
 			nr[nreg].pointerified = true;
 		}
 	} else {
-		ERROR_LOG(JIT, "MapNativeRegAsPointer: MapNativeReg failed to allocate a register?");
+		ERROR_LOG(Log::JIT, "MapNativeRegAsPointer: MapNativeReg failed to allocate a register?");
 	}
 	return nreg;
 }

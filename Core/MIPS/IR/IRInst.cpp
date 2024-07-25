@@ -17,6 +17,9 @@
 //  v = Vec4Init constant, chosen by immediate
 //  s = Shuffle immediate (4 2-bit fields, choosing a xyzw shuffle)
 //  r = Replacement function (in constant field)
+//
+//  WARNING: The IRJit compiler also uses these letters for semantic information!
+//  So if you add new letters, don't forget to add them to IRNativeRegCacheBase::MappingFromInst.
 
 static const IRMeta irMeta[] = {
 	{ IROp::Nop, "Nop", "" },
@@ -190,6 +193,7 @@ static const IRMeta irMeta[] = {
 
 const IRMeta *metaIndex[256];
 
+// Is there a way to constexpr this?
 void InitIR() {
 	if (metaIndex[0])
 		return;

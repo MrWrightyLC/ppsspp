@@ -160,6 +160,7 @@ public:
 	std::string sMicDevice;
 	bool bCameraMirrorHorizontal;
 	int iDisplayFramerateMode;  // enum DisplayFramerateMode. Android-only.
+	int iDisplayRefreshRate = 60;
 
 	bool bSoftwareRendering;
 	bool bSoftwareRenderingJit;
@@ -210,6 +211,7 @@ public:
 
 	bool bTextureBackoffCache;
 	bool bVertexDecoderJit;
+	int iAppSwitchMode;
 	bool bFullScreen;
 	bool bFullScreenMulti;
 	int iForceFullScreen = -1; // -1 = nope, 0 = force off, 1 = force on (not saved.)
@@ -480,6 +482,7 @@ public:
 	bool bEnable6DoF;
 	bool bEnableStereo;
 	bool bEnableMotions;
+	bool bAntiFlickeringFlow;
 	bool bForce72Hz;
 	bool bManualForceVR;
 	bool bPassthrough;
@@ -487,6 +490,7 @@ public:
 	float fCameraDistance;
 	float fCameraHeight;
 	float fCameraSide;
+	float fCameraPitch;
 	float fCanvasDistance;
 	float fCanvas3DDistance;
 	float fFieldOfViewPercentage;
@@ -495,7 +499,6 @@ public:
 	float fHeadRotationScale;
 	bool bHeadRotationEnabled;
 	bool bHeadRotationSmoothing;
-	int iCameraPitch;
 
 	// Debugger
 	int iDisasmWindowX;

@@ -104,6 +104,7 @@ struct LogChannel {
 };
 
 class ConsoleListener;
+class StdioListener;
 
 class LogManager {
 private:
@@ -114,9 +115,12 @@ private:
 	LogManager(const LogManager &) = delete;
 	void operator=(const LogManager &) = delete;
 
-	LogChannel log_[(size_t)LogType::NUMBER_OF_LOGS];
+	LogChannel log_[(size_t)Log::NUMBER_OF_LOGS];
 	FileLogListener *fileLog_ = nullptr;
+#if PPSSPP_PLATFORM(WINDOWS)
 	ConsoleListener *consoleLog_ = nullptr;
+#endif
+	StdioListener *stdioLog_ = nullptr;
 	OutputDebugStringLogListener *debuggerLog_ = nullptr;
 	RingbufferLogListener *ringLog_ = nullptr;
 	static LogManager *logManager_;  // Singleton. Ugh.
@@ -129,36 +133,42 @@ public:
 	void RemoveListener(LogListener *listener);
 
 	static u32 GetMaxLevel() { return (u32)MAX_LOGLEVEL;	}
-	static int GetNumChannels() { return (int)LogType::NUMBER_OF_LOGS; }
+	static int GetNumChannels() { return (int)Log::NUMBER_OF_LOGS; }
 
-	void Log(LogLevel level, LogType type,
-			 const char *file, int line, const char *fmt, va_list args);
-	bool IsEnabled(LogLevel level, LogType type);
+	void LogLine(LogLevel level, Log type,
+				 const char *file, int line, const char *fmt, va_list args);
+	bool IsEnabled(LogLevel level, Log type);
 
-	LogChannel *GetLogChannel(LogType type) {
+	LogChannel *GetLogChannel(Log type) {
 		return &log_[(size_t)type];
 	}
 
-	void SetLogLevel(LogType type, LogLevel level) {
+	void SetLogLevel(Log type, LogLevel level) {
 		log_[(size_t)type].level = level;
 	}
 
 	void SetAllLogLevels(LogLevel level) {
-		for (int i = 0; i < (int)LogType::NUMBER_OF_LOGS; ++i) {
+		for (int i = 0; i < (int)Log::NUMBER_OF_LOGS; ++i) {
 			log_[i].level = level;
 		}
 	}
 
-	void SetEnabled(LogType type, bool enable) {
+	void SetEnabled(Log type, bool enable) {
 		log_[(size_t)type].enabled = enable;
 	}
 
-	LogLevel GetLogLevel(LogType type) {
+	LogLevel GetLogLevel(Log type) {
 		return log_[(size_t)type].level;
 	}
 
+#if PPSSPP_PLATFORM(WINDOWS)
 	ConsoleListener *GetConsoleListener() const {
 		return consoleLog_;
+	}
+#endif
+
+	StdioListener *GetStdioListener() const {
+		return stdioLog_;
 	}
 
 	OutputDebugStringLogListener *GetDebuggerListener() const {

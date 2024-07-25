@@ -28,8 +28,13 @@
 
 #include "Common/Data/Encoding/Utf8.h"
 
-#include "Common/LogManager.h"
-#include "Common/ConsoleListener.h"
+#include "Common/Log/LogManager.h"
+
+#if PPSSPP_PLATFORM(WINDOWS)
+#include "Common/Log/ConsoleListener.h"
+#endif
+
+#include "Common/Log/StdioListener.h"
 #include "Common/TimeUtil.h"
 #include "Common/File/FileUtil.h"
 #include "Common/StringUtils.h"
@@ -47,14 +52,14 @@ static const char level_to_char[8] = "-NEWIDV";
 #define LOG_MSC_OUTPUTDEBUG false
 #endif
 
-void GenericLog(LogLevel level, LogType type, const char *file, int line, const char* fmt, ...) {
+void GenericLog(LogLevel level, Log type, const char *file, int line, const char* fmt, ...) {
 	if (g_bLogEnabledSetting && !(*g_bLogEnabledSetting))
 		return;
 	va_list args;
 	va_start(args, fmt);
 	LogManager *instance = LogManager::GetInstance();
 	if (instance) {
-		instance->Log(level, type, file, line, fmt, args);
+		instance->LogLine(level, type, file, line, fmt, args);
 	} else {
 		// Fall back to printf or direct android logger with a small buffer if the log manager hasn't been initialized yet.
 #if PPSSPP_PLATFORM(ANDROID)
@@ -69,7 +74,7 @@ void GenericLog(LogLevel level, LogType type, const char *file, int line, const 
 	va_end(args);
 }
 
-bool GenericLogEnabled(LogLevel level, LogType type) {
+bool GenericLogEnabled(LogLevel level, Log type) {
 	if (LogManager::GetInstance())
 		return (*g_bLogEnabledSetting) && LogManager::GetInstance()->IsEnabled(level, type);
 	return false;
@@ -77,7 +82,7 @@ bool GenericLogEnabled(LogLevel level, LogType type) {
 
 LogManager *LogManager::logManager_ = NULL;
 
-// NOTE: Needs to be kept in sync with the LogType enum.
+// NOTE: Needs to be kept in sync with the Log enum.
 static const char * const g_logTypeNames[] = {
 	"SYSTEM",
 	"BOOT",
@@ -118,7 +123,7 @@ static const char * const g_logTypeNames[] = {
 LogManager::LogManager(bool *enabledSetting) {
 	g_bLogEnabledSetting = enabledSetting;
 
-	_dbg_assert_(ARRAY_SIZE(g_logTypeNames) == (size_t)LogType::NUMBER_OF_LOGS);
+	_dbg_assert_(ARRAY_SIZE(g_logTypeNames) == (size_t)Log::NUMBER_OF_LOGS);
 
 	for (size_t i = 0; i < ARRAY_SIZE(g_logTypeNames); i++) {
 		truncate_cpy(log_[i].m_shortName, g_logTypeNames[i]);
@@ -137,10 +142,14 @@ LogManager::LogManager(bool *enabledSetting) {
 #else
 #if !defined(MOBILE_DEVICE) || defined(_DEBUG)
 	fileLog_ = new FileLogListener("");
+#if PPSSPP_PLATFORM(WINDOWS)
+#if !PPSSPP_PLATFORM(UWP)
 	consoleLog_ = new ConsoleListener();
-#ifdef _WIN32
+#endif
 	if (IsDebuggerPresent())
 		debuggerLog_ = new OutputDebugStringLogListener();
+#else
+	stdioLog_ = new StdioListener();
 #endif
 #endif
 	ringLog_ = new RingbufferLogListener();
@@ -148,7 +157,13 @@ LogManager::LogManager(bool *enabledSetting) {
 
 #if !defined(MOBILE_DEVICE) || defined(_DEBUG)
 	AddListener(fileLog_);
+#if PPSSPP_PLATFORM(WINDOWS)
+#if !PPSSPP_PLATFORM(UWP)
 	AddListener(consoleLog_);
+#endif
+#else
+	AddListener(stdioLog_);
+#endif
 #if defined(_MSC_VER) && (defined(USING_WIN_UI) || PPSSPP_PLATFORM(UWP))
 	if (IsDebuggerPresent() && debuggerLog_ && LOG_MSC_OUTPUTDEBUG)
 		AddListener(debuggerLog_);
@@ -158,10 +173,13 @@ LogManager::LogManager(bool *enabledSetting) {
 }
 
 LogManager::~LogManager() {
-	for (int i = 0; i < (int)LogType::NUMBER_OF_LOGS; ++i) {
+	for (int i = 0; i < (int)Log::NUMBER_OF_LOGS; ++i) {
 #if !defined(MOBILE_DEVICE) || defined(_DEBUG)
 		RemoveListener(fileLog_);
+#if PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
 		RemoveListener(consoleLog_);
+#endif
+		RemoveListener(stdioLog_);
 #if defined(_MSC_VER) && defined(USING_WIN_UI)
 		RemoveListener(debuggerLog_);
 #endif
@@ -174,7 +192,10 @@ LogManager::~LogManager() {
 	if (fileLog_)
 		delete fileLog_;
 #if !defined(MOBILE_DEVICE) || defined(_DEBUG)
+#if PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
 	delete consoleLog_;
+#endif
+	delete stdioLog_;
 	delete debuggerLog_;
 #endif
 	delete ringLog_;
@@ -194,14 +215,14 @@ void LogManager::ChangeFileLog(const char *filename) {
 }
 
 void LogManager::SaveConfig(Section *section) {
-	for (int i = 0; i < (int)LogType::NUMBER_OF_LOGS; i++) {
+	for (int i = 0; i < (int)Log::NUMBER_OF_LOGS; i++) {
 		section->Set((std::string(log_[i].m_shortName) + "Enabled").c_str(), log_[i].enabled);
 		section->Set((std::string(log_[i].m_shortName) + "Level").c_str(), (int)log_[i].level);
 	}
 }
 
 void LogManager::LoadConfig(const Section *section, bool debugDefaults) {
-	for (int i = 0; i < (int)LogType::NUMBER_OF_LOGS; i++) {
+	for (int i = 0; i < (int)Log::NUMBER_OF_LOGS; i++) {
 		bool enabled = false;
 		int level = 0;
 		section->Get((std::string(log_[i].m_shortName) + "Enabled").c_str(), &enabled, true);
@@ -211,7 +232,7 @@ void LogManager::LoadConfig(const Section *section, bool debugDefaults) {
 	}
 }
 
-void LogManager::Log(LogLevel level, LogType type, const char *file, int line, const char *format, va_list args) {
+void LogManager::LogLine(LogLevel level, Log type, const char *file, int line, const char *format, va_list args) {
 	const LogChannel &log = log_[(size_t)type];
 	if (level > log.level || !log.enabled)
 		return;
@@ -268,7 +289,7 @@ void LogManager::Log(LogLevel level, LogType type, const char *file, int line, c
 	}
 }
 
-bool LogManager::IsEnabled(LogLevel level, LogType type) {
+bool LogManager::IsEnabled(LogLevel level, Log type) {
 	LogChannel &log = log_[(size_t)type];
 	if (level > log.level || !log.enabled)
 		return false;
@@ -356,7 +377,7 @@ void OutputDebugStringUTF8(const char *p) {
 #else
 
 void OutputDebugStringUTF8(const char *p) {
-	INFO_LOG(SYSTEM, "%s", p);
+	INFO_LOG(Log::System, "%s", p);
 }
 
 #endif
