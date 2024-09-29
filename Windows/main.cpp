@@ -106,6 +106,7 @@ CVFPUDlg *vfpudlg = nullptr;
 
 static std::string langRegion;
 static std::string osName;
+static std::string osVersion;
 static std::string gpuDriverVersion;
 
 static std::string restartArgs;
@@ -203,6 +204,8 @@ std::string System_GetProperty(SystemProperty prop) {
 	switch (prop) {
 	case SYSPROP_NAME:
 		return osName;
+	case SYSPROP_SYSTEMBUILD:
+		return osVersion;
 	case SYSPROP_LANGREGION:
 		return langRegion;
 	case SYSPROP_CLIPBOARD_TEXT:
@@ -537,7 +540,14 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 	case SystemRequestType::INPUT_TEXT_MODAL:
 		std::thread([=] {
 			std::string out;
-			if (InputBox_GetString(MainWindow::GetHInstance(), MainWindow::GetHWND(), ConvertUTF8ToWString(param1).c_str(), param2, out)) {
+			InputBoxFlags flags{};
+			if (param3) {
+				flags |= InputBoxFlags::PasswordMasking;
+			}
+			if (!param2.empty()) {
+				flags |= InputBoxFlags::Selected;
+			}
+			if (InputBox_GetString(MainWindow::GetHInstance(), MainWindow::GetHWND(), ConvertUTF8ToWString(param1).c_str(), param2, out, flags)) {
 				g_requestManager.PostSystemSuccess(requestId, out.c_str());
 			} else {
 				g_requestManager.PostSystemFailure(requestId);
@@ -904,6 +914,13 @@ int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLin
 
 	langRegion = GetDefaultLangRegion();
 	osName = GetWindowsVersion() + " " + GetWindowsSystemArchitecture();
+
+	// OS Build
+	uint32_t outMajor = 0, outMinor = 0, outBuild = 0;
+	if (GetVersionFromKernel32(outMajor, outMinor, outBuild)) {
+		// Builds with (service pack) don't show OS Build for now
+		osVersion = std::to_string(outMajor) + "." + std::to_string(outMinor) + "." + std::to_string(outBuild);
+	}
 
 	std::string configFilename = "";
 	const std::wstring configOption = L"--config=";

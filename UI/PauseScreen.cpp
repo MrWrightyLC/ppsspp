@@ -51,10 +51,12 @@
 #include "UI/ReportScreen.h"
 #include "UI/CwCheatScreen.h"
 #include "UI/MainScreen.h"
+#include "UI/GameScreen.h"
 #include "UI/OnScreenDisplay.h"
 #include "UI/GameInfoCache.h"
 #include "UI/DisplayLayoutScreen.h"
 #include "UI/RetroAchievementScreens.h"
+#include "UI/BackgroundAudio.h"
 
 static void AfterSaveStateAction(SaveState::Status status, std::string_view message, void *) {
 	if (!message.empty() && (!g_Config.bDumpFrames || !g_Config.bDumpVideoOutput)) {
@@ -445,14 +447,18 @@ void GamePauseScreen::CreateViews() {
 	}
 
 	if (!Core_MustRunBehind()) {
-		if (middleColumn) {
-			playButton_ = middleColumn->Add(new Button("", g_Config.bRunBehindPauseMenu ? ImageID("I_PAUSE") : ImageID("I_PLAY"), new LinearLayoutParams(64, 64)));
-			playButton_->OnClick.Add([=](UI::EventParams &e) {
-				g_Config.bRunBehindPauseMenu = !g_Config.bRunBehindPauseMenu;
-				playButton_->SetImageID(g_Config.bRunBehindPauseMenu ? ImageID("I_PAUSE") : ImageID("I_PLAY"));
-				return UI::EVENT_DONE;
-			});
-		}
+		playButton_ = middleColumn->Add(new Button("", g_Config.bRunBehindPauseMenu ? ImageID("I_PAUSE") : ImageID("I_PLAY"), new LinearLayoutParams(64, 64)));
+		playButton_->OnClick.Add([=](UI::EventParams &e) {
+			g_Config.bRunBehindPauseMenu = !g_Config.bRunBehindPauseMenu;
+			playButton_->SetImageID(g_Config.bRunBehindPauseMenu ? ImageID("I_PAUSE") : ImageID("I_PLAY"));
+			return UI::EVENT_DONE;
+		});
+
+		Button *infoButton = middleColumn->Add(new Button("", ImageID("I_INFO"), new LinearLayoutParams(64, 64)));
+		infoButton->OnClick.Add([=](UI::EventParams &e) {
+			screenManager()->push(new GameScreen(gamePath_, true));
+			return UI::EVENT_DONE;
+		});
 	} else {
 		auto nw = GetI18NCategory(I18NCat::NETWORKING);
 		rightColumnHolder->Add(new TextView(nw->T("Network connected")));
@@ -475,6 +481,9 @@ void GamePauseScreen::dialogFinished(const Screen *dialog, DialogResult dr) {
 	if (tag == "ScreenshotView" && dr == DR_OK) {
 		finishNextFrame_ = true;
 	} else {
+		if (tag == "Game") {
+			g_BackgroundAudio.SetGame(Path());
+		}
 		// There may have been changes to our savestates, so let's recreate.
 		RecreateViews();
 	}

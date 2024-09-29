@@ -715,16 +715,9 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		break;
 
 	case VIRTKEY_FRAME_ADVANCE:
-		if (!Achievements::WarnUserIfHardcoreModeActive(false)) {
-			if (down) {
-				// If game is running, pause emulation immediately. Otherwise, advance a single frame.
-				if (Core_IsStepping()) {
-					frameStep_ = true;
-					Core_EnableStepping(false);
-				} else if (!frameStep_) {
-					Core_EnableStepping(true, "ui.frameAdvance", 0);
-				}
-			}
+		// Can't do this reliably in an async fashion, so we just set a variable.
+		if (down) {
+			doFrameAdvance_.store(true);
 		}
 		break;
 
@@ -748,6 +741,10 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 			UI::EventParams e{};
 			OnDevMenu.Trigger(e);
 		}
+		break;
+
+	case VIRTKEY_RESET_EMULATION:
+		System_PostUIMessage(UIMessage::REQUEST_GAME_RESET);
 		break;
 
 #ifndef MOBILE_DEVICE
@@ -839,10 +836,10 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		if (down) {
 			g_Config.bSaveNewTextures = !g_Config.bSaveNewTextures;
 			if (g_Config.bSaveNewTextures) {
-				g_OSD.Show(OSDType::MESSAGE_INFO, sc->T("saveNewTextures_true", "Textures will now be saved to your storage"), 2.0);
+				g_OSD.Show(OSDType::MESSAGE_INFO, sc->T("saveNewTextures_true", "Textures will now be saved to your storage"), 2.0, "savetexturechanged");
 				System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
 			} else {
-				g_OSD.Show(OSDType::MESSAGE_INFO, sc->T("saveNewTextures_false", "Texture saving was disabled"), 2.0);
+				g_OSD.Show(OSDType::MESSAGE_INFO, sc->T("saveNewTextures_false", "Texture saving was disabled"), 2.0, "savetexturechanged");
 			}
 		}
 		break;
@@ -850,9 +847,9 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		if (down) {
 			g_Config.bReplaceTextures = !g_Config.bReplaceTextures;
 			if (g_Config.bReplaceTextures)
-				g_OSD.Show(OSDType::MESSAGE_INFO, sc->T("replaceTextures_true", "Texture replacement enabled"), 2.0);
+				g_OSD.Show(OSDType::MESSAGE_INFO, sc->T("replaceTextures_true", "Texture replacement enabled"), 2.0, "replacetexturechanged");
 			else
-				g_OSD.Show(OSDType::MESSAGE_INFO, sc->T("replaceTextures_false", "Textures no longer are being replaced"), 2.0);
+				g_OSD.Show(OSDType::MESSAGE_INFO, sc->T("replaceTextures_false", "Textures are no longer being replaced"), 2.0, "replacetexturechanged");
 			System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
 		}
 		break;
@@ -1421,6 +1418,19 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 	}
 
 	Core_UpdateDebugStats((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::DEBUG_STATS || g_Config.bLogFrameDrops);
+
+	if (doFrameAdvance_.exchange(false)) {
+		if (!Achievements::WarnUserIfHardcoreModeActive(false)) {
+			// If game is running, pause emulation immediately. Otherwise, advance a single frame.
+			if (Core_IsStepping()) {
+				frameStep_ = true;
+				Core_EnableStepping(false);
+			} else if (!frameStep_) {
+				lastNumFlips = gpuStats.numFlips;
+				Core_EnableStepping(true, "ui.frameAdvance", 0);
+			}
+		}
+	}
 
 	bool blockedExecution = Achievements::IsBlockingExecution();
 	uint32_t clearColor = 0;
