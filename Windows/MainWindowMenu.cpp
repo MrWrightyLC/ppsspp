@@ -85,11 +85,13 @@ namespace MainWindow {
 			}
 		}
 
-		UINT menuEnable = menuEnableBool ? MF_ENABLED : MF_GRAYED;
-		UINT loadStateEnable = loadStateEnableBool ? MF_ENABLED : MF_GRAYED;
-		UINT saveStateEnable = saveStateEnableBool ? MF_ENABLED : MF_GRAYED;
-		UINT menuInGameEnable = state == UISTATE_INGAME ? MF_ENABLED : MF_GRAYED;
-		UINT umdSwitchEnable = state == UISTATE_INGAME && getUMDReplacePermit() ? MF_ENABLED : MF_GRAYED;
+		const UINT menuEnable = menuEnableBool ? MF_ENABLED : MF_GRAYED;
+		const UINT loadStateEnable = loadStateEnableBool ? MF_ENABLED : MF_GRAYED;
+		const UINT saveStateEnable = saveStateEnableBool ? MF_ENABLED : MF_GRAYED;
+		const UINT menuInGameEnable = state == UISTATE_INGAME ? MF_ENABLED : MF_GRAYED;
+		const UINT umdSwitchEnable = state == UISTATE_INGAME && getUMDReplacePermit() ? MF_ENABLED : MF_GRAYED;
+		const UINT debugEnable = !Achievements::HardcoreModeActive() ? MF_ENABLED : MF_GRAYED;
+		const UINT debugIngameEnable = (state == UISTATE_INGAME && !Achievements::HardcoreModeActive()) ? MF_ENABLED : MF_GRAYED;
 
 		EnableMenuItem(menu, ID_FILE_SAVESTATE_SLOT_MENU, saveStateEnable);
 		EnableMenuItem(menu, ID_FILE_SAVESTATEFILE, saveStateEnable);
@@ -101,15 +103,18 @@ namespace MainWindow {
 		EnableMenuItem(menu, ID_EMULATION_RESET, menuEnable);
 		EnableMenuItem(menu, ID_EMULATION_SWITCH_UMD, umdSwitchEnable);
 		EnableMenuItem(menu, ID_EMULATION_CHAT, g_Config.bEnableNetworkChat ? menuInGameEnable : MF_GRAYED);
-		EnableMenuItem(menu, ID_TOGGLE_BREAK, menuEnable);
-		EnableMenuItem(menu, ID_DEBUG_LOADMAPFILE, menuEnable);
-		EnableMenuItem(menu, ID_DEBUG_SAVEMAPFILE, menuEnable);
-		EnableMenuItem(menu, ID_DEBUG_LOADSYMFILE, menuEnable);
-		EnableMenuItem(menu, ID_DEBUG_SAVESYMFILE, menuEnable);
-		EnableMenuItem(menu, ID_DEBUG_RESETSYMBOLTABLE, menuEnable);
-		EnableMenuItem(menu, ID_DEBUG_SHOWDEBUGSTATISTICS, menuInGameEnable);
+		EnableMenuItem(menu, ID_TOGGLE_BREAK, debugIngameEnable);
+		EnableMenuItem(menu, ID_DEBUG_LOADMAPFILE, debugIngameEnable);
+		EnableMenuItem(menu, ID_DEBUG_SAVEMAPFILE, debugIngameEnable);
+		EnableMenuItem(menu, ID_DEBUG_LOADSYMFILE, debugIngameEnable);
+		EnableMenuItem(menu, ID_DEBUG_SAVESYMFILE, debugIngameEnable);
+		EnableMenuItem(menu, ID_DEBUG_RESETSYMBOLTABLE, debugIngameEnable);
+		EnableMenuItem(menu, ID_DEBUG_SHOWDEBUGSTATISTICS, debugEnable);
 		EnableMenuItem(menu, ID_DEBUG_EXTRACTFILE, menuEnable);
 		EnableMenuItem(menu, ID_DEBUG_MEMORYBASE, menuInGameEnable);
+		EnableMenuItem(menu, ID_DEBUG_DISASSEMBLY, debugEnable);
+		EnableMenuItem(menu, ID_DEBUG_MEMORYVIEW, debugEnable);
+		EnableMenuItem(menu, ID_DEBUG_GEDEBUGGER, debugEnable);
 
 		// While playing, this pop up doesn't work - and probably doesn't make sense.
 		EnableMenuItem(menu, ID_OPTIONS_LANGUAGE, state == UISTATE_INGAME ? MF_GRAYED : MF_ENABLED);
@@ -330,7 +335,7 @@ namespace MainWindow {
 		if (GetUIState() == UISTATE_INGAME) {
 			browsePauseAfter = Core_IsStepping();
 			if (!browsePauseAfter)
-				Core_EnableStepping(true, "ui.boot", 0);
+				Core_Break("ui.boot", 0);
 		}
 		auto mm = GetI18NCategory(I18NCat::MAINMENU);
 
@@ -349,7 +354,7 @@ namespace MainWindow {
 
 	void BrowseAndBootDone(std::string filename) {
 		if (GetUIState() == UISTATE_INGAME || GetUIState() == UISTATE_EXCEPTION || GetUIState() == UISTATE_PAUSEMENU) {
-			Core_EnableStepping(false);
+			Core_Resume();
 		}
 		filename = ReplaceAll(filename, "\\", "/");
 		System_PostUIMessage(UIMessage::REQUEST_GAME_BOOT, filename);
@@ -475,12 +480,12 @@ namespace MainWindow {
 				if (disasmWindow)
 					SendMessage(disasmWindow->GetDlgHandle(), WM_COMMAND, IDC_STOPGO, 0);
 				else
-					Core_EnableStepping(false);
+					Core_Resume();
 			} else {
 				if (disasmWindow)
 					SendMessage(disasmWindow->GetDlgHandle(), WM_COMMAND, IDC_STOPGO, 0);
 				else
-					Core_EnableStepping(true, "ui.break", 0);
+					Core_Break("ui.break", 0);
 			}
 			noFocusPause = !noFocusPause;	// If we pause, override pause on lost focus
 			break;
@@ -491,7 +496,7 @@ namespace MainWindow {
 
 		case ID_EMULATION_STOP:
 			if (Core_IsStepping())
-				Core_EnableStepping(false);
+				Core_Resume();
 
 			Core_Stop();
 			System_PostUIMessage(UIMessage::REQUEST_GAME_STOP);
@@ -500,7 +505,7 @@ namespace MainWindow {
 
 		case ID_EMULATION_RESET:
 			System_PostUIMessage(UIMessage::REQUEST_GAME_RESET);
-			Core_EnableStepping(false);
+			Core_Resume();
 			break;
 
 		case ID_EMULATION_SWITCH_UMD:

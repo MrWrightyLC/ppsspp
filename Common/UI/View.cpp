@@ -72,6 +72,9 @@ void Event::Add(std::function<EventReturn(EventParams&)> func) {
 
 // Call this from input thread or whatever, it doesn't matter
 void Event::Trigger(EventParams &e) {
+	if (handlers_.empty()) {
+		return;
+	}
 	EventTriggered(this, e);
 }
 
@@ -243,6 +246,11 @@ bool Clickable::Touch(const TouchInput &input) {
 	if (!IsEnabled()) {
 		dragging_ = false;
 		down_ = false;
+		return contains;
+	}
+
+	// Ignore buttons other than the left one.
+	if ((input.flags & TOUCH_MOUSE) && (input.buttons & 1) == 0) {
 		return contains;
 	}
 
@@ -1405,6 +1413,7 @@ bool TriggerButton::Touch(const TouchInput &input) {
 			down_ |= 1 << input.id;
 		}
 	}
+
 	if (input.flags & TOUCH_MOVE) {
 		if (contains)
 			down_ |= 1 << input.id;

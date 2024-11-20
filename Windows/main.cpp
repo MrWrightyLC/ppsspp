@@ -121,7 +121,7 @@ static double g_lastActivity = 0.0;
 static double g_lastKeepAwake = 0.0;
 // Time until we stop considering the core active without user input.
 // Should this be configurable?  2 hours currently.
-static const double ACTIVITY_IDLE_TIMEOUT = 2.0 * 3600.0;
+static constexpr double ACTIVITY_IDLE_TIMEOUT = 2.0 * 3600.0;
 
 void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
 	ShellExecute(NULL, L"open", ConvertUTF8ToWString(url).c_str(), NULL, NULL, SW_SHOWNORMAL);
@@ -434,6 +434,11 @@ void System_Notify(SystemNotification notification) {
 	case SystemNotification::DISASSEMBLY:
 		if (disasmWindow)
 			PostDialogMessage(disasmWindow, WM_DEB_UPDATE);
+		break;
+
+	case SystemNotification::DISASSEMBLY_AFTERSTEP:
+		if (disasmWindow)
+			PostDialogMessage(disasmWindow, WM_DEB_AFTERSTEP);
 		break;
 
 	case SystemNotification::SYMBOL_MAP_UPDATED:

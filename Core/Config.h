@@ -145,7 +145,7 @@ public:
 
 	std::string sIgnoreCompatSettings;
 
-	bool bDiscordPresence;  // Enables setting the Discord presence to the current game (or menu)
+	bool bDiscordRichPresence;  // Enables setting the Discord presence to the current game (or menu)
 
 	// GFX
 	int iGPUBackend;
@@ -189,6 +189,8 @@ public:
 	bool bSustainedPerformanceMode;  // Android: Slows clocks down to avoid overheating/speed fluctuations.
 	bool bIgnoreScreenInsets;  // Android: Center screen disregarding insets if this is enabled.
 	bool bVSync;
+
+	bool bShowImDebugger;
 
 	int iFrameSkip;
 	int iFrameSkipType;

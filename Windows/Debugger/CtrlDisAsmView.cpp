@@ -19,6 +19,7 @@
 #include "Windows/Debugger/DebuggerShared.h"
 #include "Windows/Debugger/BreakpointWindow.h"
 #include "Windows/Debugger/EditSymbolsWindow.h"
+#include "Core/RetroAchievements.h"
 #include "Windows/main.h"
 
 #include "Common/CommonWindows.h"
@@ -60,7 +61,7 @@ void CtrlDisAsmView::deinit()
 	//UnregisterClass(szClassName, hInst)
 }
 
-void CtrlDisAsmView::scanFunctions()
+void CtrlDisAsmView::scanVisibleFunctions()
 {
 	manager.analyze(windowStart,manager.getNthNextAddress(windowStart,visibleRows)-windowStart);
 }
@@ -322,7 +323,7 @@ void CtrlDisAsmView::assembleOpcode(u32 address, const std::string &defaultText)
 	Reporting::NotifyDebugger();
 	if (result == true)
 	{
-		scanFunctions();
+		scanVisibleFunctions();
 
 		if (address == curAddress)
 			gotoAddr(manager.getNthNextAddress(curAddress,1));
@@ -492,7 +493,7 @@ void CtrlDisAsmView::drawArguments(HDC hdc, const DisassemblyLineInfo &line, int
 void CtrlDisAsmView::onPaint(WPARAM wParam, LPARAM lParam)
 {
 	auto memLock = Memory::Lock();
-	if (!debugger->isAlive()) return;
+	if (!debugger->isAlive() || Achievements::HardcoreModeActive()) return;
 
 	PAINTSTRUCT ps;
 	HDC actualHdc = BeginPaint(wnd, &ps);
@@ -527,10 +528,10 @@ void CtrlDisAsmView::onPaint(WPARAM wParam, LPARAM lParam)
 		addressPositions[address] = rowY1;
 
 		// draw background
-		COLORREF backgroundColor = whiteBackground ? 0xFFFFFF : debugger->getColor(address);
+		COLORREF backgroundColor = whiteBackground ? 0xFFFFFF : (debugger->getColor(address, false) & 0xFFFFFF);
 		COLORREF textColor = 0x000000;
 
-		if (isInInterval(address,line.totalSize,debugger->getPC()))
+		if (isInInterval(address, line.totalSize, debugger->getPC()))
 		{
 			backgroundColor = scaleColor(backgroundColor,1.05f);
 		}
@@ -641,7 +642,7 @@ void CtrlDisAsmView::onVScroll(WPARAM wParam, LPARAM lParam)
 		return;
 	}
 
-	scanFunctions();
+	scanVisibleFunctions();
 	redraw();
 }
 
@@ -672,6 +673,9 @@ void CtrlDisAsmView::followBranch()
 
 void CtrlDisAsmView::onChar(WPARAM wParam, LPARAM lParam)
 {
+	if (Achievements::HardcoreModeActive())
+		return;
+
 	if (keyTaken) return;
 
 	char str[2];
@@ -713,6 +717,9 @@ void CtrlDisAsmView::editBreakpoint()
 
 void CtrlDisAsmView::onKeyDown(WPARAM wParam, LPARAM lParam)
 {
+	if (Achievements::HardcoreModeActive())
+		return;
+
 	dontRedraw = false;
 	u32 windowEnd = manager.getNthNextAddress(windowStart,visibleRows);
 	keyTaken = true;
@@ -750,11 +757,11 @@ void CtrlDisAsmView::onKeyDown(WPARAM wParam, LPARAM lParam)
 			break;
 		case VK_UP:
 			scrollWindow(-1);
-			scanFunctions();
+			scanVisibleFunctions();
 			break;
 		case VK_DOWN:
 			scrollWindow(1);
-			scanFunctions();
+			scanVisibleFunctions();
 			break;
 		case VK_NEXT:
 			setCurAddress(manager.getNthPreviousAddress(windowEnd,1),KeyDownAsync(VK_SHIFT));
@@ -836,7 +843,7 @@ void CtrlDisAsmView::scrollAddressIntoView()
 	else if (curAddress >= windowEnd)
 		windowStart =  manager.getNthPreviousAddress(curAddress,visibleRows-1);
 
-	scanFunctions();
+	scanVisibleFunctions();
 }
 
 bool CtrlDisAsmView::curAddressIsVisible()
@@ -884,6 +891,8 @@ void CtrlDisAsmView::toggleBreakpoint(bool toggleEnabled)
 
 void CtrlDisAsmView::onMouseDown(WPARAM wParam, LPARAM lParam, int button)
 {
+	if (Achievements::HardcoreModeActive())
+		return;
 	dontRedraw = false;
 	int y = HIWORD(lParam);
 
@@ -947,6 +956,9 @@ void CtrlDisAsmView::NopInstructions(u32 selectRangeStart, u32 selectRangeEnd) {
 
 void CtrlDisAsmView::onMouseUp(WPARAM wParam, LPARAM lParam, int button)
 {
+	if (Achievements::HardcoreModeActive())
+		return;
+
 	if (button == 1)
 	{
 		int y = HIWORD(lParam);
@@ -1112,6 +1124,9 @@ void CtrlDisAsmView::onMouseUp(WPARAM wParam, LPARAM lParam, int button)
 
 void CtrlDisAsmView::onMouseMove(WPARAM wParam, LPARAM lParam, int button)
 {
+	if (Achievements::HardcoreModeActive())
+		return;
+
 	if ((button & 1) != 0)
 	{
 		int y = HIWORD(lParam);
@@ -1428,5 +1443,5 @@ u32 CtrlDisAsmView::getInstructionSizeAt(u32 address)
 {
 	u32 start = manager.getStartAddress(address);
 	u32 next  = manager.getNthNextAddress(start,1);
-	return next-address;
+	return next - address;
 }

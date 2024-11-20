@@ -206,10 +206,11 @@ static const ConfigSetting generalSettings[] = {
 	ConfigSetting("IgnoreBadMemAccess", &g_Config.bIgnoreBadMemAccess, true, CfgFlag::DEFAULT),
 	ConfigSetting("CurrentDirectory", &g_Config.currentDirectory, "", CfgFlag::DEFAULT),
 	ConfigSetting("ShowDebuggerOnLoad", &g_Config.bShowDebuggerOnLoad, false, CfgFlag::DEFAULT),
+	ConfigSetting("ShowImDebugger", &g_Config.bShowImDebugger, false, CfgFlag::DONT_SAVE),
 	ConfigSetting("CheckForNewVersion", &g_Config.bCheckForNewVersion, true, CfgFlag::DEFAULT),
 	ConfigSetting("Language", &g_Config.sLanguageIni, &DefaultLangRegion, CfgFlag::DEFAULT),
 	ConfigSetting("ForceLagSync2", &g_Config.bForceLagSync, false, CfgFlag::PER_GAME),
-	ConfigSetting("DiscordPresence", &g_Config.bDiscordPresence, true, CfgFlag::DEFAULT),  // Or maybe it makes sense to have it per-game? Race conditions abound...
+	ConfigSetting("DiscordRichPresence", &g_Config.bDiscordRichPresence, false, CfgFlag::DEFAULT),
 	ConfigSetting("UISound", &g_Config.bUISound, false, CfgFlag::DEFAULT),
 
 	ConfigSetting("DisableHTTPS", &g_Config.bDisableHTTPS, false, CfgFlag::DONT_SAVE),

@@ -32,6 +32,8 @@
 #include <mutex>
 #include <condition_variable>
 
+#include "ext/lua/lapi.h"
+
 #include "Common/System/System.h"
 #include "Common/System/Request.h"
 #include "Common/File/Path.h"
@@ -117,6 +119,9 @@ static volatile bool pspIsInited = false;
 static volatile bool pspIsIniting = false;
 static volatile bool pspIsQuitting = false;
 static volatile bool pspIsRebooting = false;
+
+// This is called on EmuThread before RunLoop.
+void Core_ProcessStepping(MIPSDebugInterface *cpu);
 
 void ResetUIState() {
 	globalUIState = UISTATE_MENU;
@@ -254,6 +259,7 @@ bool CPU_Init(std::string *errorString, FileLoader *loadedFile) {
 	if (!g_CoreParameter.mountIso.empty()) {
 		g_CoreParameter.mountIsoLoader = ConstructFileLoader(g_CoreParameter.mountIso);
 	}
+	g_CoreParameter.fileType = type;
 
 	MIPSAnalyst::Reset();
 	Replacement_Init();
@@ -289,8 +295,8 @@ bool CPU_Init(std::string *errorString, FileLoader *loadedFile) {
 		break;
 	default:
 		// Can we even get here?
-		WARN_LOG(Log::Loader, "CPU_Init didn't recognize file. %s", errorString->c_str());
-		break;
+		ERROR_LOG(Log::Loader, "CPU_Init didn't recognize file. %s", errorString->c_str());
+		return false;
 	}
 
 	// Here we have read the PARAM.SFO, let's see if we need any compatibility overrides.
@@ -385,7 +391,6 @@ void Core_UpdateState(CoreState newState) {
 	if ((coreState == CORE_RUNNING || coreState == CORE_NEXTFRAME) && newState != CORE_RUNNING)
 		coreStatePending = true;
 	coreState = newState;
-	Core_UpdateSingleStep();
 }
 
 void Core_UpdateDebugStats(bool collectStats) {
@@ -525,6 +530,8 @@ bool PSP_InitUpdate(std::string *error_string) {
 }
 
 bool PSP_Init(const CoreParameter &coreParam, std::string *error_string) {
+	// Spawn a lua instance
+
 	if (!PSP_InitStart(coreParam, error_string))
 		return false;
 
@@ -550,6 +557,9 @@ bool PSP_IsQuitting() {
 }
 
 void PSP_Shutdown() {
+	// Reduce the risk for weird races with the Windows GE debugger.
+	gpuDebug = nullptr;
+
 	Achievements::UnloadGame();
 
 	// Do nothing if we never inited.
@@ -594,7 +604,6 @@ bool PSP_Reboot(std::string *error_string) {
 }
 
 void PSP_BeginHostFrame() {
-	// Reapply the graphics state of the PSP
 	if (gpu) {
 		gpu->BeginHostFrame();
 	}
@@ -626,7 +635,7 @@ void PSP_RunLoopUntil(u64 globalticks) {
 	if (coreState == CORE_POWERDOWN || coreState == CORE_BOOT_ERROR || coreState == CORE_RUNTIME_ERROR) {
 		return;
 	} else if (coreState == CORE_STEPPING) {
-		Core_ProcessStepping();
+		Core_ProcessStepping(currentDebugMIPS);
 		return;
 	}
 
