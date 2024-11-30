@@ -457,6 +457,8 @@ public:
 	int MultiSampleLevel() const { return multiSampleLevel_; }
 
 	virtual void UpdateTag(const char *tag) {}
+	virtual const char *Tag() const { return "(no name)"; }
+
 protected:
 	int width_ = -1, height_ = -1, layers_ = 1, multiSampleLevel_ = 0;
 };
@@ -701,6 +703,11 @@ struct ClippedDraw {
 	s16 clipy;
 	s16 clipw;
 	s16 cliph;
+	Draw::Texture *bindTexture;
+	Draw::Framebuffer *bindFramebufferAsTex;
+	void *bindNativeTexture;
+	Draw::SamplerState *samplerState;
+	Draw::Pipeline *pipeline;
 };
 
 class DrawContext {
@@ -816,6 +823,8 @@ public:
 	// Data types:
 	// * Vulkan: VkImageView
 	// * D3D11: ID3D11ShaderResourceView*
+	// * OpenGL: GLRTexture
+	// * D3D9: LPDIRECT3DTEXTURE9
 	virtual void BindNativeTexture(int sampler, void *nativeTexture) = 0;
 
 	// Only supports a single dynamic uniform buffer, for maximum compatibility with the old APIs and ease of emulation.
@@ -839,7 +848,7 @@ public:
 	virtual void DrawUP(const void *vdata, int vertexCount) = 0;
 	virtual void DrawIndexedUP(const void *vdata, int vertexCount, const void *idata, int indexCount) = 0;
 	// Intended for ImGui display lists, easier to do optimally this way.
-	virtual void DrawIndexedClippedBatchUP(const void *vdata, int vertexCount, const void *idata, int indexCount, Slice<ClippedDraw> draws) = 0;
+	virtual void DrawIndexedClippedBatchUP(const void *vdata, int vertexCount, const void *idata, int indexCount, Slice<ClippedDraw> draws, const void *dynUniforms, size_t size) = 0;
 
 	// Frame management (for the purposes of sync and resource management, necessary with modern APIs). Default implementations here.
 	virtual void BeginFrame(DebugFlags debugFlags) = 0;

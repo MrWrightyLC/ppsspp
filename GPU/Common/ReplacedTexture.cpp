@@ -101,7 +101,6 @@ ReplacedTexture::~ReplacedTexture() {
 	if (threadWaitable_) {
 		SetState(ReplacementState::CANCEL_INIT);
 
-		std::unique_lock<std::mutex> lock(lock_);
 		threadWaitable_->WaitAndRelease();
 		threadWaitable_ = nullptr;
 	}
@@ -225,7 +224,7 @@ void ReplacedTexture::Prepare(VFSBackend *vfs) {
 		VFSFileReference *fileRef = vfs_->GetFile(desc_.filenames[i].c_str());
 		if (!fileRef) {
 			if (i == 0) {
-				INFO_LOG(Log::G3D, "Texture replacement file '%s' not found", desc_.filenames[i].c_str());
+				INFO_LOG(Log::G3D, "Texture replacement file '%s' not found in %s", desc_.filenames[i].c_str(), vfs_->toString().c_str());
 				// No file at all. Mark as NOT_FOUND.
 				SetState(ReplacementState::NOT_FOUND);
 				return;
@@ -468,11 +467,11 @@ ReplacedTexture::LoadLevelResult ReplacedTexture::LoadLevelData(VFSFileReference
 		std::vector<uint8_t> buffer;
 		buffer.resize(fileSize);
 		buffer.resize(vfs_->Read(openFile, &buffer[0], buffer.size()));
+		vfs_->CloseFile(openFile);
 
 		basist::ktx2_transcoder transcoder;
 		if (!transcoder.init(buffer.data(), (int)buffer.size())) {
 			WARN_LOG(Log::G3D, "Error reading KTX file");
-			vfs_->CloseFile(openFile);
 			return LoadLevelResult::LOAD_ERROR;
 		}
 
@@ -512,7 +511,6 @@ ReplacedTexture::LoadLevelResult ReplacedTexture::LoadLevelData(VFSFileReference
 			}
 		} else {
 			WARN_LOG(Log::G3D, "PPSSPP currently only supports KTX for basis/UASTC textures. This may change in the future.");
-			vfs_->CloseFile(openFile);
 			return LoadLevelResult::LOAD_ERROR;
 		}
 
@@ -557,7 +555,6 @@ ReplacedTexture::LoadLevelResult ReplacedTexture::LoadLevelData(VFSFileReference
 			levels_.push_back(level);
 		}
 		transcoder.clear();
-		vfs_->CloseFile(openFile);
 
 		return LoadLevelResult::DONE;  // don't read more levels
 	} else if (imageType == ReplacedImageType::DDS) {
@@ -618,6 +615,7 @@ ReplacedTexture::LoadLevelResult ReplacedTexture::LoadLevelData(VFSFileReference
 			vfs_->CloseFile(openFile);
 			return LoadLevelResult::LOAD_ERROR;
 		}
+		vfs_->CloseFile(openFile);
 
 		int w, h, f;
 		uint8_t *image;
@@ -626,7 +624,6 @@ ReplacedTexture::LoadLevelResult ReplacedTexture::LoadLevelData(VFSFileReference
 		if (LoadZIMPtr(&zim[0], fileSize, &w, &h, &f, &image)) {
 			if (w > level.w || h > level.h) {
 				ERROR_LOG(Log::G3D, "Texture replacement changed since header read: %s", filename.c_str());
-				vfs_->CloseFile(openFile);
 				return LoadLevelResult::LOAD_ERROR;
 			}
 
@@ -649,7 +646,6 @@ ReplacedTexture::LoadLevelResult ReplacedTexture::LoadLevelData(VFSFileReference
 			good = false;
 		}
 
-		vfs_->CloseFile(openFile);
 		return LoadLevelResult::CONTINUE;
 
 	} else if (imageType == ReplacedImageType::PNG) {
@@ -669,6 +665,7 @@ ReplacedTexture::LoadLevelResult ReplacedTexture::LoadLevelData(VFSFileReference
 			vfs_->CloseFile(openFile);
 			return LoadLevelResult::LOAD_ERROR;
 		}
+		vfs_->CloseFile(openFile);
 
 		bool checkedAlpha = false;
 		if ((png.format & PNG_FORMAT_FLAG_ALPHA) == 0) {
@@ -685,7 +682,6 @@ ReplacedTexture::LoadLevelResult ReplacedTexture::LoadLevelData(VFSFileReference
 		out.resize(level.w * level.h * 4);
 		if (!png_image_finish_read(&png, nullptr, &out[0], level.w * 4, nullptr)) {
 			ERROR_LOG(Log::G3D, "Could not load texture replacement: %s - %s", filename.c_str(), png.message);
-			vfs_->CloseFile(openFile);
 			out.resize(0);
 			return LoadLevelResult::LOAD_ERROR;
 		}
@@ -700,8 +696,6 @@ ReplacedTexture::LoadLevelResult ReplacedTexture::LoadLevelData(VFSFileReference
 		}
 
 		levels_.push_back(level);
-
-		vfs_->CloseFile(openFile);
 		return LoadLevelResult::CONTINUE;
 	} else {
 		WARN_LOG(Log::G3D, "Don't know how to load this image type! %d", (int)imageType);

@@ -556,7 +556,8 @@ namespace MainWindow {
 		case ID_FILE_SAVESTATE_NEXT_SLOT_HC:
 		{
 			if (!Achievements::WarnUserIfHardcoreModeActive(true)) {
-				if (!KeyMap::PspButtonHasMappings(VIRTKEY_NEXT_SLOT)) {
+				// We let F3 (search next) in the imdebugger take priority, if active.
+				if (!KeyMap::PspButtonHasMappings(VIRTKEY_NEXT_SLOT) && !g_Config.bShowImDebugger) {
 					SaveState::NextSlot();
 					System_PostUIMessage(UIMessage::SAVESTATE_DISPLAY_SLOT);
 				}
@@ -812,7 +813,7 @@ namespace MainWindow {
 
 		case ID_DEBUG_MEMORYBASE:
 		{
-			W32Util::CopyTextToClipboard(hWnd, ConvertUTF8ToWString(StringFromFormat("%016llx", (uint64_t)(uintptr_t)Memory::base)));
+			System_CopyStringToClipboard(StringFromFormat("%016llx", (uint64_t)(uintptr_t)Memory::base));
 			break;
 		}
 
@@ -822,7 +823,6 @@ namespace MainWindow {
 			if (!InputBox_GetString(hInst, hWnd, L"Disc filename", filename, filename)) {
 				break;
 			}
-
 			const char *lastSlash = strrchr(filename.c_str(), '/');
 			if (lastSlash) {
 				fn = lastSlash + 1;
@@ -870,7 +870,9 @@ namespace MainWindow {
 			break;
 
 		case ID_OPTIONS_FULLSCREEN:
-			SendToggleFullscreen(!g_Config.UseFullScreen());
+			if (!g_Config.bShowImDebugger) {
+				SendToggleFullscreen(!g_Config.UseFullScreen());
+			}
 			break;
 
 		case ID_OPTIONS_TEXTUREFILTERING_AUTO:   g_Config.iTexFiltering = TEX_FILTER_AUTO; break;

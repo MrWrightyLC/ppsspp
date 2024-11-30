@@ -25,6 +25,9 @@
 #include "GPU/GPU.h"
 #include "GPU/GPUInterface.h"
 
+class FramebufferManagerCommon;
+class TextureCacheCommon;
+
 struct GPUDebugOp {
 	u32 pc;
 	u8 cmd;
@@ -218,6 +221,10 @@ public:
 
 	virtual uint32_t SetAddrTranslation(uint32_t value) = 0;
 	virtual uint32_t GetAddrTranslation() = 0;
+	
+	// TODO: Make a proper debug interface instead of accessing directly?
+	virtual FramebufferManagerCommon *GetFramebufferManagerCommon() = 0;
+	virtual TextureCacheCommon *GetTextureCacheCommon() = 0;
 
 	virtual bool GetCurrentSimpleVertices(int count, std::vector<GPUDebugVertex> &vertices, std::vector<u16> &indices) {
 		return false;

@@ -56,7 +56,7 @@
 static std::mutex g_stepMutex;
 struct StepCommand {
 	CPUStepType type;
-	int param;
+	int stepSize;
 	const char *reason;
 	u32 relatedAddr;
 	bool empty() const {
@@ -64,7 +64,7 @@ struct StepCommand {
 	}
 	void clear() {
 		type = CPUStepType::None;
-		param = 0;
+		stepSize = 0;
 		reason = "";
 		relatedAddr = 0;
 	}
@@ -144,6 +144,14 @@ bool Core_IsInactive() {
 	return coreState != CORE_RUNNING && coreState != CORE_NEXTFRAME && !coreStatePending;
 }
 
+static inline void Core_StateProcessed() {
+	if (coreStatePending) {
+		std::lock_guard<std::mutex> guard(m_hInactiveMutex);
+		coreStatePending = false;
+		m_InactiveCond.notify_all();
+	}
+}
+
 void Core_WaitInactive() {
 	while (Core_IsActive() && !GPUStepping::IsStepping()) {
 		std::unique_lock<std::mutex> guard(m_hInactiveMutex);
@@ -219,21 +227,11 @@ bool UpdateScreenScale(int width, int height) {
 }
 
 // Used by Windows, SDL, Qt.
-void UpdateRunLoop(GraphicsContext *ctx) {
-	NativeFrame(ctx);
-	if (windowHidden && g_Config.bPauseWhenMinimized) {
-		sleep_ms(16, "window-hidden");
-		return;
-	}
-}
-
-// Note: not used on Android.
 void Core_RunLoop(GraphicsContext *ctx) {
 	if (windowHidden && g_Config.bPauseWhenMinimized) {
 		sleep_ms(16, "window-hidden");
 		return;
 	}
-
 	NativeFrame(ctx);
 }
 
@@ -243,11 +241,12 @@ bool Core_RequestSingleStep(CPUStepType type, int stepSize) {
 		ERROR_LOG(Log::CPU, "Can't submit two steps in one frame");
 		return false;
 	}
+	// Out-steps don't need a size.
+	_dbg_assert_(stepSize != 0 || type == CPUStepType::Out);
 	g_stepCommand = { type, stepSize };
 	return true;
 }
 
-// See comment in header.
 // Handles more advanced step types (used by the debugger).
 // stepSize is to support stepping through compound instructions like fused lui+ladd (li).
 // Yes, our disassembler does support those.
@@ -260,20 +259,22 @@ static void Core_PerformStep(MIPSDebugInterface *cpu, CPUStepType stepType, int 
 		u32 currentPc = cpu->GetPC();
 		u32 newAddress = currentPc + stepSize;
 		// If the current PC is on a breakpoint, the user still wants the step to happen.
-		CBreakPoints::SetSkipFirst(currentPc);
+		g_breakpoints.SetSkipFirst(currentPc);
 		for (int i = 0; i < (int)(newAddress - currentPc) / 4; i++) {
 			currentMIPS->SingleStep();
 		}
-		return;
+		break;
 	}
 	case CPUStepType::Over:
 	{
 		u32 currentPc = cpu->GetPC();
 		u32 breakpointAddress = currentPc + stepSize;
 
-		CBreakPoints::SetSkipFirst(currentPc);
-
+		g_breakpoints.SetSkipFirst(currentPc);
 		MIPSAnalyst::MipsOpcodeInfo info = MIPSAnalyst::GetOpcodeInfo(cpu, cpu->GetPC());
+
+		// TODO: Doing a step over in a delay slot is a bit .. unclear. Maybe just do a single step.
+
 		if (info.isBranch) {
 			if (info.isConditional == false) {
 				if (info.isLinkedBranch) { // jal, jalr
@@ -290,10 +291,14 @@ static void Core_PerformStep(MIPSDebugInterface *cpu, CPUStepType stepType, int 
 					breakpointAddress = currentPc + 2 * cpu->getInstructionSize(0);
 				}
 			}
+			g_breakpoints.AddBreakPoint(breakpointAddress, true);
+			Core_Resume();
+		} else {
+			// If not a branch, just do a simple single-step, no point in involving the breakpoint machinery.
+			for (int i = 0; i < (int)(breakpointAddress - currentPc) / 4; i++) {
+				currentMIPS->SingleStep();
+			}
 		}
-
-		CBreakPoints::AddBreakPoint(breakpointAddress, true);
-		Core_Resume();
 		break;
 	}
 	case CPUStepType::Out:
@@ -319,8 +324,8 @@ static void Core_PerformStep(MIPSDebugInterface *cpu, CPUStepType stepType, int 
 		u32 breakpointAddress = frames[1].pc;
 
 		// If the current PC is on a breakpoint, the user doesn't want to do nothing.
-		CBreakPoints::SetSkipFirst(currentMIPS->pc);
-		CBreakPoints::AddBreakPoint(breakpointAddress, true);
+		g_breakpoints.SetSkipFirst(currentMIPS->pc);
+		g_breakpoints.AddBreakPoint(breakpointAddress, true);
 		Core_Resume();
 		break;
 	}
@@ -331,7 +336,7 @@ static void Core_PerformStep(MIPSDebugInterface *cpu, CPUStepType stepType, int 
 }
 
 void Core_ProcessStepping(MIPSDebugInterface *cpu) {
-	coreStatePending = false;
+	Core_StateProcessed();
 
 	// Check if there's any pending save state actions.
 	SaveState::Process();
@@ -345,7 +350,7 @@ void Core_ProcessStepping(MIPSDebugInterface *cpu) {
 	// We're not inside jit now, so it's safe to clear the breakpoints.
 	static int lastSteppingCounter = -1;
 	if (lastSteppingCounter != steppingCounter) {
-		CBreakPoints::ClearTemporaryBreakPoints();
+		g_breakpoints.ClearTemporaryBreakPoints();
 		System_Notify(SystemNotification::DISASSEMBLY_AFTERSTEP);
 		System_Notify(SystemNotification::MEM_VIEW);
 		lastSteppingCounter = steppingCounter;
@@ -361,7 +366,7 @@ void Core_ProcessStepping(MIPSDebugInterface *cpu) {
 	Core_ResetException();
 
 	if (!g_stepCommand.empty()) {
-		Core_PerformStep(cpu, g_stepCommand.type, g_stepCommand.param);
+		Core_PerformStep(cpu, g_stepCommand.type, g_stepCommand.stepSize);
 		if (g_stepCommand.type == CPUStepType::Into) {
 			// We're already done. The other step types will resume the CPU.
 			System_Notify(SystemNotification::DISASSEMBLY_AFTERSTEP);
@@ -380,6 +385,7 @@ bool Core_Run(GraphicsContext *ctx) {
 	System_Notify(SystemNotification::DISASSEMBLY);
 	while (true) {
 		if (GetUIState() != UISTATE_INGAME) {
+			Core_StateProcessed();
 			if (GetUIState() == UISTATE_EXIT) {
 				// Not sure why we do a final frame here?
 				NativeFrame(ctx);
@@ -398,9 +404,12 @@ bool Core_Run(GraphicsContext *ctx) {
 				return true;
 			}
 			break;
+		case CORE_POWERDOWN:
+			// Need to step the loop.
+			Core_RunLoop(ctx);
+			return true;
 
 		case CORE_POWERUP:
-		case CORE_POWERDOWN:
 		case CORE_BOOT_ERROR:
 		case CORE_RUNTIME_ERROR:
 			// Exit loop!!
@@ -417,12 +426,20 @@ void Core_Break(const char *reason, u32 relatedAddress) {
 	// Stop the tracer
 	{
 		std::lock_guard<std::mutex> lock(g_stepMutex);
-		if (!g_stepCommand.empty()) {
-			// Already broke.
-			ERROR_LOG(Log::CPU, "Core_Break called with a break already in progress: %s", g_stepCommand.reason);
-			return;
+		if (!g_stepCommand.empty() && Core_IsStepping()) {
+			// If we're in a failed step that uses a temp breakpoint, we need to be able to override it here.
+			switch (g_stepCommand.type) {
+			case CPUStepType::Over:
+			case CPUStepType::Out:
+				// Allow overwriting the command.
+				break;
+			default:
+				ERROR_LOG(Log::CPU, "Core_Break called with a step-command already in progress: %s", g_stepCommand.reason);
+				return;
+			}
 		}
 		mipsTracer.stop_tracing();
+		g_stepCommand.type = CPUStepType::None;
 		g_stepCommand.reason = reason;
 		g_stepCommand.relatedAddr = relatedAddress;
 		steppingCounter++;

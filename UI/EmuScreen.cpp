@@ -27,7 +27,7 @@ using namespace std::placeholders;
 #include "Common/Render/Text/draw_text.h"
 #include "Common/File/FileUtil.h"
 #include "Common/Battery/Battery.h"
-
+#include "Common/File/VFS/VFS.h"
 #include "Common/UI/Root.h"
 #include "Common/UI/UI.h"
 #include "Common/UI/Context.h"
@@ -599,7 +599,7 @@ void EmuScreen::sendMessage(UIMessage message, const char *value) {
 			gstate_c.skipDrawReason &= ~SKIPDRAW_WINDOW_MINIMIZED;
 		}
 	} else if (message == UIMessage::SHOW_CHAT_SCREEN) {
-		if (g_Config.bEnableNetworkChat) {
+		if (g_Config.bEnableNetworkChat && !g_Config.bShowImDebugger) {
 			if (!chatButton_)
 				RecreateViews();
 
@@ -748,7 +748,7 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		break;
 
 	case VIRTKEY_OPENCHAT:
-		if (down && g_Config.bEnableNetworkChat) {
+		if (down && g_Config.bEnableNetworkChat && !g_Config.bShowImDebugger) {
 			UI::EventParams e{};
 			OnChatMenu.Trigger(e);
 			controlMapper_.ForceReleaseVKey(virtualKeyCode);
@@ -952,19 +952,45 @@ void EmuScreen::onVKeyAnalog(int virtualKeyCode, float value) {
 
 bool EmuScreen::UnsyncKey(const KeyInput &key) {
 	System_Notify(SystemNotification::ACTIVITY);
+
+	// Update imgui modifier flags
+	if (key.flags & (KEY_DOWN | KEY_UP)) {
+		bool down = (key.flags & KEY_DOWN) != 0;
+		switch (key.keyCode) {
+		case NKCODE_CTRL_LEFT: keyCtrlLeft_ = down; break;
+		case NKCODE_CTRL_RIGHT: keyCtrlRight_ = down; break;
+		case NKCODE_SHIFT_LEFT: keyShiftLeft_ = down; break;
+		case NKCODE_SHIFT_RIGHT: keyShiftRight_ = down; break;
+		case NKCODE_ALT_LEFT: keyAltLeft_ = down; break;
+		case NKCODE_ALT_RIGHT: keyAltRight_ = down; break;
+		default: break;
+		}
+	}
+
 	if (UI::IsFocusMovementEnabled() || (g_Config.bShowImDebugger && imguiInited_)) {
 		// Note: Allow some Vkeys through, so we can toggle the imgui for example (since we actually block the control mapper otherwise in imgui mode).
 		// We need to manually implement it here :/
-		if (g_Config.bShowImDebugger && imguiInited_ && (key.flags & (KEY_UP | KEY_DOWN))) {
-			InputMapping mapping(key.deviceId, key.keyCode);
-			std::vector<int> pspButtons;
-			bool mappingFound = KeyMap::InputMappingToPspButton(mapping, &pspButtons);
-			if (mappingFound) {
-				for (auto b : pspButtons) {
-					if (b == VIRTKEY_TOGGLE_DEBUGGER || b == VIRTKEY_PAUSE) {
-						return controlMapper_.Key(key, &pauseTrigger_);
+		if (g_Config.bShowImDebugger && imguiInited_) {
+			if (key.flags & (KEY_UP | KEY_DOWN)) {
+				InputMapping mapping(key.deviceId, key.keyCode);
+				std::vector<int> pspButtons;
+				bool mappingFound = KeyMap::InputMappingToPspButton(mapping, &pspButtons);
+				if (mappingFound) {
+					for (auto b : pspButtons) {
+						if (b == VIRTKEY_TOGGLE_DEBUGGER || b == VIRTKEY_PAUSE) {
+							return controlMapper_.Key(key, &pauseTrigger_);
+						}
 					}
 				}
+			}
+			UI::EnableFocusMovement(false);
+			// Enable gamepad controls while running imgui (but ignore mouse/keyboard).
+			switch (key.deviceId) {
+			case DEVICE_ID_KEYBOARD:
+			case DEVICE_ID_MOUSE:
+				break;
+			default:
+				controlMapper_.Key(key, &pauseTrigger_);
 			}
 		}
 
@@ -1012,8 +1038,7 @@ void EmuScreen::UnsyncAxis(const AxisInput *axes, size_t count) {
 
 class GameInfoBGView : public UI::InertView {
 public:
-	GameInfoBGView(const Path &gamePath, UI::LayoutParams *layoutParams) : InertView(layoutParams), gamePath_(gamePath) {
-	}
+	GameInfoBGView(const Path &gamePath, UI::LayoutParams *layoutParams) : InertView(layoutParams), gamePath_(gamePath) {}
 
 	void Draw(UIContext &dc) override {
 		// Should only be called when visible.
@@ -1645,8 +1670,15 @@ void EmuScreen::renderImDebugger() {
 		Draw::DrawContext *draw = screenManager()->getDrawContext();
 		if (!imguiInited_) {
 			imguiInited_ = true;
+			ImGui_ImplPlatform_Init(GetSysDirectory(DIRECTORY_SYSTEM) / "imgui.ini");
 			imDebugger_ = std::make_unique<ImDebugger>();
-			ImGui_ImplThin3d_Init(draw);
+
+			// Read the TTF font
+			size_t size = 0;
+			uint8_t *fontData = g_VFS.ReadFile("Roboto-Condensed.ttf", &size);
+			// This call works even if fontData is nullptr, in which case the font just won't get loaded.
+			// This takes ownership of the font array.
+			ImGui_ImplThin3d_Init(draw, fontData, size);
 		}
 
 		if (PSP_IsInited()) {
@@ -1656,7 +1688,15 @@ void EmuScreen::renderImDebugger() {
 			ImGui_ImplThin3d_NewFrame(draw, ui_draw2d.GetDrawMatrix());
 
 			ImGui::NewFrame();
-			imDebugger_->Frame(currentDebugMIPS);
+
+			// Update keyboard modifiers.
+			auto &io = ImGui::GetIO();
+			io.AddKeyEvent(ImGuiMod_Ctrl, keyCtrlLeft_ || keyCtrlRight_);
+			io.AddKeyEvent(ImGuiMod_Shift, keyShiftLeft_ || keyShiftRight_);
+			io.AddKeyEvent(ImGuiMod_Alt, keyAltLeft_ || keyAltRight_);
+			// io.AddKeyEvent(ImGuiMod_Super, e.key.super);
+
+			imDebugger_->Frame(currentDebugMIPS, gpuDebug);
 
 			ImGui::Render();
 			ImGui_ImplThin3d_RenderDrawData(ImGui::GetDrawData(), draw);
