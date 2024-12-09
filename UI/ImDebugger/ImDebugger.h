@@ -26,11 +26,12 @@
 
 class MIPSDebugInterface;
 class GPUDebugInterface;
+struct ImConfig;
 
 // Corresponds to the CDisasm dialog
 class ImDisasmWindow {
 public:
-	void Draw(MIPSDebugInterface *mipsDebug, bool *open, CoreState coreState);
+	void Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, CoreState coreState);
 	ImDisasmView &View() {
 		return disasmView_;
 	}
@@ -77,6 +78,10 @@ struct ImConfig {
 	bool filesystemBrowserOpen;
 	bool kernelObjectsOpen;
 	bool audioChannelsOpen;
+	bool debugStatsOpen;
+	bool geDebuggerOpen;
+	bool geStateOpen;
+	bool schedulerOpen;
 
 	// HLE explorer settings
 	// bool filterByUsed = true;
@@ -119,6 +124,7 @@ private:
 	RequesterToken reqToken_;
 
 	ImDisasmWindow disasm_;
+	ImGeDebuggerWindow geDebugger_;
 	ImStructViewer structViewer_;
 
 	// Open variables.

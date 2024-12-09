@@ -110,7 +110,7 @@
 #include "Core/TiltEventProcessor.h"
 #include "Core/ThreadPools.h"
 
-#include "GPU/GPUInterface.h"
+#include "GPU/GPUCommon.h"
 #include "UI/AudioCommon.h"
 #include "UI/BackgroundAudio.h"
 #include "UI/ControlMappingScreen.h"
@@ -185,6 +185,7 @@ static Draw::Pipeline *colorPipeline;
 static Draw::Pipeline *texColorPipeline;
 static UIContext *uiContext;
 static int g_restartGraphics;
+static bool g_windowHidden = false;
 
 #ifdef _WIN32
 WindowsAudioBackend *winAudioBackend;
@@ -517,9 +518,7 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 		DiskCachingFileLoaderCache::SetCacheDir(g_Config.appCacheDirectory);
 	}
 
-	if (!LogManager::GetInstance()) {
-		LogManager::Init(&g_Config.bEnableLogging);
-	}
+	g_logManager.Init(&g_Config.bEnableLogging);
 
 #if !PPSSPP_PLATFORM(WINDOWS)
 	g_Config.SetSearchPath(GetSysDirectory(DIRECTORY_SYSTEM));
@@ -528,8 +527,6 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 	// fail and it will be set to the default. Later, we load again when we get permission.
 	g_Config.Load();
 #endif
-
-	LogManager *logman = LogManager::GetInstance();
 
 	const char *fileToLog = nullptr;
 	Path stateToLoad;
@@ -673,21 +670,21 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 	}
 
 	if (fileToLog)
-		LogManager::GetInstance()->ChangeFileLog(fileToLog);
+		g_logManager.ChangeFileLog(fileToLog);
 
 	if (forceLogLevel)
-		LogManager::GetInstance()->SetAllLogLevels(logLevel);
+		g_logManager.SetAllLogLevels(logLevel);
 
 	PostLoadConfig();
 
 #if PPSSPP_PLATFORM(ANDROID)
 	logger = new AndroidLogger();
-	logman->AddListener(logger);
+	g_logManager.AddListener(logger);
 #elif (defined(MOBILE_DEVICE) && !defined(_DEBUG))
 	// Enable basic logging for any kind of mobile device, since LogManager doesn't.
 	// The MOBILE_DEVICE/_DEBUG condition matches LogManager.cpp.
 	logger = new PrintfLogger();
-	logman->AddListener(logger);
+	g_logManager.AddListener(logger);
 #endif
 
 	if (System_GetPropertyBool(SYSPROP_SUPPORTS_PERMISSIONS)) {
@@ -993,7 +990,7 @@ static void TakeScreenshot(Draw::DrawContext *draw) {
 
 	bool success = TakeGameScreenshot(draw, filename, g_Config.bScreenshotsAsPNG ? ScreenshotFormat::PNG : ScreenshotFormat::JPG, SCREENSHOT_OUTPUT);
 	if (success) {
-		g_OSD.Show(OSDType::MESSAGE_FILE_LINK, filename.ToString(), 0.0f, "screenshot_link");
+		g_OSD.Show(OSDType::MESSAGE_FILE_LINK, filename.ToVisualString(), 0.0f, "screenshot_link");
 		if (System_GetPropertyBool(SYSPROP_CAN_SHOW_FILE)) {
 			g_OSD.SetClickCallback("screenshot_link", [](bool clicked, void *data) -> void {
 				Path *path = reinterpret_cast<Path *>(data);
@@ -1021,6 +1018,13 @@ static void SendMouseDeltaAxis();
 
 void NativeFrame(GraphicsContext *graphicsContext) {
 	PROFILE_END_FRAME();
+
+	if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_DESKTOP) {
+		if (g_windowHidden && g_Config.bPauseWhenMinimized) {
+			sleep_ms(16, "window-hidden");
+			return;
+		}
+	}
 
 	// This can only be accessed from Windows currently, and causes linking errors with headless etc.
 	if (g_restartGraphics == 1) {
@@ -1483,7 +1487,7 @@ void NativeShutdown() {
 
 	// Avoid shutting this down when restarting core.
 	if (!restarting)
-		LogManager::Shutdown();
+		g_logManager.Shutdown();
 
 	if (logger) {
 		delete logger;
@@ -1527,4 +1531,64 @@ std::string NativeLoadSecret(std::string_view nameOfSecret) {
 		data.clear();  // just to be sure.
 	}
 	return data;
+}
+
+void Native_NotifyWindowHidden(bool hidden) {
+	g_windowHidden = hidden;
+	// TODO: Wait until we can react?
+}
+
+bool Native_IsWindowHidden() {
+	return g_windowHidden;
+}
+
+static bool IsWindowSmall(int pixelWidth, int pixelHeight) {
+	// Can't take this from config as it will not be set if windows is maximized.
+	int w = (int)(pixelWidth * g_display.dpi_scale_x);
+	int h = (int)(pixelHeight * g_display.dpi_scale_y);
+	return g_Config.IsPortrait() ? (h < 480 + 80) : (w < 480 + 80);
+}
+
+bool Native_UpdateScreenScale(int width, int height) {
+	bool smallWindow;
+
+	float g_logical_dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_LOGICAL_DPI);
+	g_display.dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_DPI);
+
+	if (g_display.dpi < 0.0f) {
+		g_display.dpi = 96.0f;
+	}
+	if (g_logical_dpi < 0.0f) {
+		g_logical_dpi = 96.0f;
+	}
+
+	g_display.dpi_scale_x = g_logical_dpi / g_display.dpi;
+	g_display.dpi_scale_y = g_logical_dpi / g_display.dpi;
+	g_display.dpi_scale_real_x = g_display.dpi_scale_x;
+	g_display.dpi_scale_real_y = g_display.dpi_scale_y;
+
+	smallWindow = IsWindowSmall(width, height);
+	if (smallWindow) {
+		g_display.dpi /= 2.0f;
+		g_display.dpi_scale_x *= 2.0f;
+		g_display.dpi_scale_y *= 2.0f;
+	}
+	g_display.pixel_in_dps_x = 1.0f / g_display.dpi_scale_x;
+	g_display.pixel_in_dps_y = 1.0f / g_display.dpi_scale_y;
+
+	int new_dp_xres = (int)(width * g_display.dpi_scale_x);
+	int new_dp_yres = (int)(height * g_display.dpi_scale_y);
+
+	bool dp_changed = new_dp_xres != g_display.dp_xres || new_dp_yres != g_display.dp_yres;
+	bool px_changed = g_display.pixel_xres != width || g_display.pixel_yres != height;
+
+	if (dp_changed || px_changed) {
+		g_display.dp_xres = new_dp_xres;
+		g_display.dp_yres = new_dp_yres;
+		g_display.pixel_xres = width;
+		g_display.pixel_yres = height;
+		NativeResized();
+		return true;
+	}
+	return false;
 }

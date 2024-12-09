@@ -26,7 +26,7 @@
 #include "Core/HLE/sceAudiocodec.h"
 #include "Core/HLE/sceMp3.h"
 #include "Core/HLE/AtracCtx.h"
-
+#include "Core/CoreTiming.h"
 // Threads window
 #include "Core/HLE/sceKernelThread.h"
 
@@ -41,7 +41,36 @@
 
 extern bool g_TakeScreenshot;
 
+void DrawSchedulerView(ImConfig &cfg) {
+	ImGui::SetNextWindowSize(ImVec2(420, 300), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("Event Scheduler", &cfg.schedulerOpen)) {
+		ImGui::End();
+		return;
+	}
+	s64 ticks = CoreTiming::GetTicks();
+	if (ImGui::BeginChild("event_list", ImVec2(300.0f, 0.0))) {
+		const CoreTiming::Event *event = CoreTiming::GetFirstEvent();
+		while (event) {
+			ImGui::Text("%s (%lld)", CoreTiming::GetEventTypes()[event->type].name, event->time - ticks);
+			event = event->next;
+		}
+		ImGui::EndChild();
+	}
+	ImGui::SameLine();
+	if (ImGui::BeginChild("general")) {
+		ImGui::Text("CoreState: %s", CoreStateToString(coreState));
+		ImGui::Text("downcount: %d", currentMIPS->downcount);
+		ImGui::Text("slicelength: %d", CoreTiming::slicelength);
+		ImGui::Text("Ticks: %lld", ticks);
+		ImGui::Text("Clock (MHz): %0.1f", (float)CoreTiming::GetClockFrequencyHz() / 1000000.0f);
+		ImGui::Text("Global time (us): %lld", CoreTiming::GetGlobalTimeUs());
+		ImGui::EndChild();
+	}
+	ImGui::End();
+}
+
 void DrawRegisterView(MIPSDebugInterface *mipsDebug, bool *open) {
+	ImGui::SetNextWindowSize(ImVec2(320, 600), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("Registers", open)) {
 		ImGui::End();
 		return;
@@ -131,25 +160,75 @@ static const char *ThreadStatusToString(u32 status) {
 	return "(unk)";
 }
 
+void WaitIDToString(WaitType waitType, SceUID waitID, char *buffer, size_t bufSize) {
+	switch (waitType) {
+	case WAITTYPE_AUDIOCHANNEL:
+		snprintf(buffer, bufSize, "chan %d", (int)waitID);
+		return;
+	case WAITTYPE_IO:
+		// TODO: More detail
+		snprintf(buffer, bufSize, "fd: %d", (int)waitID);
+		return;
+	case WAITTYPE_ASYNCIO:
+		snprintf(buffer, bufSize, "id: %d", (int)waitID);
+		return;
+	case WAITTYPE_THREADEND:
+	case WAITTYPE_MUTEX:
+	case WAITTYPE_LWMUTEX:
+	case WAITTYPE_MODULE:
+	case WAITTYPE_MSGPIPE:
+	case WAITTYPE_FPL:
+	case WAITTYPE_VPL:
+	case WAITTYPE_MBX:
+	case WAITTYPE_EVENTFLAG:
+	case WAITTYPE_SEMA:
+		// Get the name of the thread
+		if (kernelObjects.IsValid(waitID)) {
+			auto obj = kernelObjects.GetFast<KernelObject>(waitID);
+			if (obj && obj->GetName()) {
+				truncate_cpy(buffer, bufSize, obj->GetName());
+				return;
+			}
+		}
+		break;
+	case WAITTYPE_DELAY:
+	case WAITTYPE_SLEEP:
+	case WAITTYPE_HLEDELAY:
+	case WAITTYPE_UMD:
+		truncate_cpy(buffer, bufSize, "-");
+		return;
+	default:
+		truncate_cpy(buffer, bufSize, "(unimpl)");
+		return;
+	}
+
+}
+
 void DrawThreadView(ImConfig &cfg) {
+	ImGui::SetNextWindowSize(ImVec2(420, 300), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("Threads", &cfg.threadsOpen)) {
 		ImGui::End();
 		return;
 	}
 
 	std::vector<DebugThreadInfo> info = GetThreadsInfo();
-	if (ImGui::BeginTable("threads", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersH)) {
+	if (ImGui::BeginTable("threads", 8, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersH)) {
+		ImGui::TableSetupColumn("Id", ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableSetupColumn("PC", ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableSetupColumn("Entry", ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableSetupColumn("Priority", ImGuiTableColumnFlags_WidthFixed);
-		ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthStretch);
-
+		ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Wait Type", ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn("Wait ID", ImGuiTableColumnFlags_WidthStretch);
+		// .initialStack, .stackSize, etc
 		ImGui::TableHeadersRow();
 
 		for (int i = 0; i < (int)info.size(); i++) {
-			const auto &thread = info[i];
+			const DebugThreadInfo &thread = info[i];
 			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::Text("%d", thread.id);
 			ImGui::TableNextColumn();
 			ImGui::PushID(i);
 			if (ImGui::Selectable(thread.name, cfg.selectedThread == i, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns)) {
@@ -167,6 +246,12 @@ void DrawThreadView(ImConfig &cfg) {
 			ImGui::Text("%d", thread.priority);
 			ImGui::TableNextColumn();
 			ImGui::TextUnformatted(ThreadStatusToString(thread.status));
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(getWaitTypeName(thread.waitType));
+			ImGui::TableNextColumn();
+			char temp[64];
+			WaitIDToString(thread.waitType, thread.waitID, temp, sizeof(temp));
+			ImGui::TextUnformatted(temp);
 			if (ImGui::BeginPopup("threadPopup")) {
 				DebugThreadInfo &thread = info[i];
 				ImGui::Text("Thread: %s", thread.name);
@@ -175,16 +260,19 @@ void DrawThreadView(ImConfig &cfg) {
 					snprintf(temp, sizeof(temp), "%08x", thread.entrypoint);
 					System_CopyStringToClipboard(temp);
 				}
-				if (ImGui::MenuItem("Copy PC to clipboard")) {
+				if (ImGui::MenuItem("Copy thread PC to clipboard")) {
 					char temp[64];
 					snprintf(temp, sizeof(temp), "%08x", thread.curPC);
 					System_CopyStringToClipboard(temp);
 				}
 				if (ImGui::MenuItem("Kill thread")) {
+					// Dangerous!
 					sceKernelTerminateThread(thread.id);
 				}
-				if (ImGui::MenuItem("Force run")) {
-					__KernelResumeThreadFromWait(thread.id, 0);
+				if (thread.status == THREADSTATUS_WAIT) {
+					if (ImGui::MenuItem("Force run now")) {
+						__KernelResumeThreadFromWait(thread.id, 0);
+					}
 				}
 				ImGui::EndPopup();
 			}
@@ -213,6 +301,7 @@ static void RecurseFileSystem(IFileSystem *fs, std::string path) {
 }
 
 static void DrawFilesystemBrowser(ImConfig &cfg) {
+	ImGui::SetNextWindowSize(ImVec2(420, 500), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("File System", &cfg.filesystemBrowserOpen)) {
 		ImGui::End();
 		return;
@@ -738,7 +827,6 @@ ImDebugger::~ImDebugger() {
 	cfg_.SaveConfig(ConfigPath());
 }
 
-
 void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebug) {
 	// Snapshot the coreState to avoid inconsistency.
 	const CoreState coreState = ::coreState;
@@ -753,15 +841,17 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 
 	if (ImGui::BeginMainMenuBar()) {
 		if (ImGui::BeginMenu("Debug")) {
-			if (coreState == CoreState::CORE_STEPPING) {
+			switch (coreState) {
+			case CoreState::CORE_STEPPING_CPU:
 				if (ImGui::MenuItem("Run")) {
 					Core_Resume();
 				}
-				// used to have the step commands here, but they belong in the disassembly window.
-			} else {
+				break;
+			case CoreState::CORE_RUNNING_CPU:
 				if (ImGui::MenuItem("Break")) {
 					Core_Break("Menu:Break");
 				}
+				break;
 			}
 			ImGui::Separator();
 			ImGui::MenuItem("Ignore bad memory accesses", nullptr, &g_Config.bIgnoreBadMemAccess);
@@ -811,6 +901,7 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 			ImGui::MenuItem("Registers", nullptr, &cfg_.regsOpen);
 			ImGui::MenuItem("Callstacks", nullptr, &cfg_.callstackOpen);
 			ImGui::MenuItem("Breakpoints", nullptr, &cfg_.breakpointsOpen);
+			ImGui::MenuItem("Scheduler", nullptr, &cfg_.schedulerOpen);
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("HLE")) {
@@ -821,6 +912,8 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Graphics")) {
+			ImGui::MenuItem("GE Debugger", nullptr, &cfg_.geDebuggerOpen);
+			ImGui::MenuItem("GE State", nullptr, &cfg_.geStateOpen);
 			ImGui::MenuItem("Display Output", nullptr, &cfg_.displayOpen);
 			ImGui::MenuItem("Textures", nullptr, &cfg_.texturesOpen);
 			ImGui::MenuItem("Framebuffers", nullptr, &cfg_.framebuffersOpen);
@@ -833,6 +926,7 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Tools")) {
+			ImGui::MenuItem("Debug stats", nullptr, &cfg_.debugStatsOpen);
 			ImGui::MenuItem("Struct viewer", nullptr, &cfg_.structViewerOpen);
 			ImGui::EndMenu();
 		}
@@ -856,7 +950,7 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 	}
 
 	if (cfg_.disasmOpen) {
-		disasm_.Draw(mipsDebug, &cfg_.disasmOpen, coreState);
+		disasm_.Draw(mipsDebug, cfg_, coreState);
 	}
 
 	if (cfg_.regsOpen) {
@@ -911,19 +1005,35 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 		DrawDisplayWindow(cfg_, gpuDebug->GetFramebufferManagerCommon());
 	}
 
+	if (cfg_.debugStatsOpen) {
+		DrawDebugStatsWindow(cfg_);
+	}
+
 	if (cfg_.structViewerOpen) {
 		structViewer_.Draw(mipsDebug, &cfg_.structViewerOpen);
 	}
+
+	if (cfg_.geDebuggerOpen) {
+		geDebugger_.Draw(cfg_, gpuDebug);
+	}
+
+	if (cfg_.geStateOpen) {
+		DrawGeStateWindow(cfg_, gpuDebug);
+	}
+
+	if (cfg_.schedulerOpen) {
+		DrawSchedulerView(cfg_);
+	}
 }
 
-void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, bool *open, CoreState coreState) {
+void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, CoreState coreState) {
 	char title[256];
 	snprintf(title, sizeof(title), "%s - Disassembly", "Allegrex MIPS");
 
 	disasmView_.setDebugger(mipsDebug);
 
 	ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin(title, open, ImGuiWindowFlags_NoNavInputs)) {
+	if (!ImGui::Begin(title, &cfg.disasmOpen, ImGuiWindowFlags_NoNavInputs)) {
 		ImGui::End();
 		return;
 	}
@@ -932,43 +1042,77 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, bool *open, CoreState c
 		// Process stepping keyboard shortcuts.
 		if (ImGui::IsKeyPressed(ImGuiKey_F10)) {
 			u32 stepSize = disasmView_.getInstructionSizeAt(mipsDebug->GetPC());
-			Core_RequestSingleStep(CPUStepType::Over, stepSize);
+			Core_RequestCPUStep(CPUStepType::Over, stepSize);
 		}
 		if (ImGui::IsKeyPressed(ImGuiKey_F11)) {
 			u32 stepSize = disasmView_.getInstructionSizeAt(mipsDebug->GetPC());
-			Core_RequestSingleStep(CPUStepType::Into, stepSize);
+			Core_RequestCPUStep(CPUStepType::Into, stepSize);
 		}
 	}
 
-	ImGui::BeginDisabled(coreState != CORE_STEPPING);
+	if (coreState == CORE_STEPPING_GE || coreState == CORE_RUNNING_GE) {
+		ImGui::Text("!!! Currently stepping the GE");
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Open Ge debugger")) {
+			cfg.geDebuggerOpen = true;
+			ImGui::SetWindowFocus("GE Debugger");
+		}
+	}
+
+	ImGui::BeginDisabled(coreState != CORE_STEPPING_CPU);
 	if (ImGui::SmallButton("Run")) {
 		Core_Resume();
 	}
 	ImGui::EndDisabled();
 
 	ImGui::SameLine();
-	ImGui::BeginDisabled(coreState != CORE_RUNNING);
+	ImGui::BeginDisabled(coreState != CORE_RUNNING_CPU);
 	if (ImGui::SmallButton("Pause")) {
 		Core_Break("Pause");
 	}
 	ImGui::EndDisabled();
 
+	ImGui::BeginDisabled(coreState != CORE_STEPPING_CPU);
+
 	ImGui::SameLine();
-	if (ImGui::SmallButton("Step Into")) {
+	ImGui::Text("Step: ");
+	ImGui::SameLine();
+
+	if (ImGui::SmallButton("Into")) {
 		u32 stepSize = disasmView_.getInstructionSizeAt(mipsDebug->GetPC());
-		Core_RequestSingleStep(CPUStepType::Into, stepSize);
+		Core_RequestCPUStep(CPUStepType::Into, stepSize);
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("F11");
 	}
 
 	ImGui::SameLine();
-	if (ImGui::SmallButton("Step Over")) {
+	if (ImGui::SmallButton("Over")) {
 		u32 stepSize = disasmView_.getInstructionSizeAt(mipsDebug->GetPC());
-		Core_RequestSingleStep(CPUStepType::Over, stepSize);
+		Core_RequestCPUStep(CPUStepType::Over, stepSize);
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("F10");
 	}
 
 	ImGui::SameLine();
-	if (ImGui::SmallButton("Step Out")) {
-		Core_RequestSingleStep(CPUStepType::Out, 0);
+	if (ImGui::SmallButton("Out")) {
+		Core_RequestCPUStep(CPUStepType::Out, 0);
 	}
+
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Frame")) {
+		Core_RequestCPUStep(CPUStepType::Frame, 0);
+	}
+
+	ImGui::SameLine();
+	ImGui::SmallButton("Skim");
+	if (ImGui::IsItemActive()) {
+		u32 stepSize = disasmView_.getInstructionSizeAt(mipsDebug->GetPC());
+		Core_RequestCPUStep(CPUStepType::Into, stepSize);
+	}
+
+	ImGui::EndDisabled();
 
 	ImGui::SameLine();
 	if (ImGui::SmallButton("Goto PC")) {
@@ -1121,6 +1265,10 @@ void ImConfig::SyncConfig(IniFile *ini, bool save) {
 	sync.Sync("kernelObjectsOpen", &kernelObjectsOpen, false);
 	sync.Sync("audioChannelsOpen", &audioChannelsOpen, false);
 	sync.Sync("texturesOpen", &texturesOpen, false);
+	sync.Sync("debugStatsOpen", &debugStatsOpen, false);
+	sync.Sync("geDebuggerOpen", &geDebuggerOpen, false);
+	sync.Sync("geStateOpen", &geStateOpen, false);
+	sync.Sync("schedulerOpen", &schedulerOpen, false);
 
 	sync.SetSection(ini->GetOrCreateSection("Settings"));
 	sync.Sync("displayLatched", &displayLatched, false);

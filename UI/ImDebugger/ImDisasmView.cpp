@@ -102,7 +102,6 @@ static std::string trimString(std::string input) {
 
 void ImDisasmView::assembleOpcode(u32 address, const std::string &defaultText) {
 	/*
-	auto memLock = Memory::Lock();
 	if (!Core_IsStepping()) {
 		MessageBox(wnd, L"Cannot change code while the core is running!", L"Error", MB_OK);
 		return;
@@ -315,7 +314,6 @@ void ImDisasmView::drawArguments(ImDrawList *drawList, Rect rc, const Disassembl
 }
 
 void ImDisasmView::Draw(ImDrawList *drawList) {
-	auto memLock = Memory::Lock();
 	if (!debugger->isAlive()) {
 		return;
 	}
@@ -338,7 +336,7 @@ void ImDisasmView::Draw(ImDrawList *drawList) {
 	const bool is_active = ImGui::IsItemActive();   // Held
 
 	if (pressed) {
-		INFO_LOG(Log::System, "Pressed");
+		// INFO_LOG(Log::System, "Pressed");
 	}
 	ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
 
@@ -437,7 +435,7 @@ void ImDisasmView::Draw(ImDrawList *drawList) {
 	ImGuiIO& io = ImGui::GetIO();
 	ImVec2 mousePos = ImVec2(io.MousePos.x - canvas_p0.x, io.MousePos.y - canvas_p0.y);
 	if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-		// INFO_LOG(Log::CPU, "Mousedown %f,%f active:%d hover:%d", mousePos.x, mousePos.y, is_active, is_hovered);
+		// INFO_LOG(Log::System, "Mousedown %f,%f active:%d hover:%d", mousePos.x, mousePos.y, is_active, is_hovered);
 		onMouseDown(mousePos.x, mousePos.y, 1);
 	}
 	if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
@@ -445,13 +443,13 @@ void ImDisasmView::Draw(ImDrawList *drawList) {
 		onMouseDown(mousePos.x, mousePos.y, 2);
 	}
 	if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-		// INFO_LOG(Log::CPU, "Mouseup %f,%f active:%d hover:%d", mousePos.x, mousePos.y, is_active, is_hovered);
+		// INFO_LOG(Log::System, "Mouseup %f,%f active:%d hover:%d", mousePos.x, mousePos.y, is_active, is_hovered);
 		if (is_hovered) {
 			onMouseUp(mousePos.x, mousePos.y, 1);
 		}
 	}
 	if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-		// INFO_LOG(Log::CPU, "Mousedrag %f,%f active:%d hover:%d", mousePos.x, mousePos.y, is_active, is_hovered);
+		// INFO_LOG(Log::System, "Mousedrag %f,%f active:%d hover:%d", mousePos.x, mousePos.y, is_active, is_hovered);
 		if (is_hovered) {
 			onMouseMove(mousePos.x, mousePos.y, 1);
 		}
@@ -477,7 +475,7 @@ void ImDisasmView::Draw(ImDrawList *drawList) {
 	}
 
 	if (pressed) {
-		// INFO_LOG(Log::CPU, "Clicked %f,%f", mousePos.x, mousePos.y);
+		// INFO_LOG(Log::System, "Clicked %f,%f", mousePos.x, mousePos.y);
 		if (mousePos.x < rowHeight_) {  // Left column
 			// Toggle breakpoint at dragAddr_.
 			debugger->toggleBreakpoint(curAddress_);
@@ -922,7 +920,6 @@ void ImDisasmView::PopupMenu() {
 }
 
 void ImDisasmView::updateStatusBarText() {
-	auto memLock = Memory::Lock();
 	if (!PSP_IsInited())
 		return;
 
@@ -1047,8 +1044,6 @@ void ImDisasmView::SearchNext(bool forward) {
 		return;
 	}
 
-	auto memLock = Memory::Lock();
-
 	// Note: Search will replace matchAddress_ with the current address.
 	u32 searchAddress = manager.getNthNextAddress(matchAddress_, 1);
 
@@ -1110,7 +1105,6 @@ void ImDisasmView::SearchNext(bool forward) {
 }
 
 std::string ImDisasmView::disassembleRange(u32 start, u32 size) {
-	auto memLock = Memory::Lock();
 	std::string result;
 
 	// gather all branch targets without labels
