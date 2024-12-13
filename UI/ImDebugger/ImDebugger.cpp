@@ -35,11 +35,54 @@
 
 // GPU things
 #include "GPU/Common/GPUDebugInterface.h"
+#include "GPU/Debugger/Stepping.h"
 
 #include "UI/ImDebugger/ImDebugger.h"
 #include "UI/ImDebugger/ImGe.h"
 
 extern bool g_TakeScreenshot;
+
+void ShowInMemoryViewerMenuItem(uint32_t addr, ImControl &control) {
+	if (ImGui::BeginMenu("Show in memory viewer")) {
+		for (int i = 0; i < 4; i++) {
+			if (ImGui::MenuItem(ImMemWindow::Title(i))) {
+				control.command = { ImCmd::SHOW_IN_MEMORY_VIEWER, addr, (u32)i };
+			}
+		}
+		ImGui::EndMenu();
+	}
+}
+
+void ShowInWindowMenuItems(uint32_t addr, ImControl &control) {
+	// Enable when we implement the memory viewer
+	ShowInMemoryViewerMenuItem(addr, control);
+	if (ImGui::MenuItem("Show in CPU debugger")) {
+		control.command = { ImCmd::SHOW_IN_CPU_DISASM, addr };
+	}
+	if (ImGui::MenuItem("Show in GE debugger")) {
+		control.command = { ImCmd::SHOW_IN_GE_DISASM, addr };
+	}
+}
+
+// TODO: Style it.
+// Left click performs the preferred action, if any. Right click opens a menu for more.
+void ImClickableAddress(uint32_t addr, ImControl &control, ImCmd cmd) {
+	char temp[32];
+	snprintf(temp, sizeof(temp), "%08x", addr);
+	if (ImGui::SmallButton(temp)) {
+		control.command = { cmd, addr };
+	}
+
+	// Create a right-click popup menu
+	if (ImGui::BeginPopupContextItem(temp)) {
+		if (ImGui::MenuItem("Copy address to clipboard")) {
+			System_CopyStringToClipboard(temp);
+		}
+		ImGui::Separator();
+		ShowInWindowMenuItems(addr, control);
+		ImGui::EndPopup();
+	}
+}
 
 void DrawSchedulerView(ImConfig &cfg) {
 	ImGui::SetNextWindowSize(ImVec2(420, 300), ImGuiCond_FirstUseEver);
@@ -51,7 +94,7 @@ void DrawSchedulerView(ImConfig &cfg) {
 	if (ImGui::BeginChild("event_list", ImVec2(300.0f, 0.0))) {
 		const CoreTiming::Event *event = CoreTiming::GetFirstEvent();
 		while (event) {
-			ImGui::Text("%s (%lld)", CoreTiming::GetEventTypes()[event->type].name, event->time - ticks);
+			ImGui::Text("%s (%lld): %d", CoreTiming::GetEventTypes()[event->type].name, event->time - ticks, (int)event->userdata);
 			event = event->next;
 		}
 		ImGui::EndChild();
@@ -69,9 +112,9 @@ void DrawSchedulerView(ImConfig &cfg) {
 	ImGui::End();
 }
 
-void DrawRegisterView(MIPSDebugInterface *mipsDebug, bool *open) {
+void DrawRegisterView(ImConfig &config, ImControl &control, const MIPSDebugInterface *mipsDebug) {
 	ImGui::SetNextWindowSize(ImVec2(320, 600), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Registers", open)) {
+	if (!ImGui::Begin("Registers", &config.regsOpen)) {
 		ImGui::End();
 		return;
 	}
@@ -83,24 +126,30 @@ void DrawRegisterView(MIPSDebugInterface *mipsDebug, bool *open) {
 				ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthFixed);
 				ImGui::TableSetupColumn("value_i", ImGuiTableColumnFlags_WidthStretch);
 
-				auto gprLine = [&](const char *regname, int value) {
+				auto gprLine = [&](int index, const char *regname, int value) {
 					ImGui::TableNextRow();
 					ImGui::TableNextColumn();
 					ImGui::TextUnformatted(regname);
 					ImGui::TableNextColumn();
-					ImGui::Text("%08x", value);
+					if (Memory::IsValid4AlignedAddress(value)) {
+						ImGui::PushID(index);
+						ImClickableAddress(value, control, index == MIPS_REG_RA ? ImCmd::SHOW_IN_CPU_DISASM : ImCmd::SHOW_IN_MEMORY_VIEWER);
+						ImGui::PopID();
+					} else {
+						ImGui::Text("%08x", value);
+					}
 					if (value >= -1000000 && value <= 1000000) {
 						ImGui::TableSetColumnIndex(2);
 						ImGui::Text("%d", value);
 					}
 				};
 				for (int i = 0; i < 32; i++) {
-					gprLine(mipsDebug->GetRegName(0, i).c_str(), mipsDebug->GetGPR32Value(i));
+					gprLine(i, mipsDebug->GetRegName(0, i).c_str(), mipsDebug->GetGPR32Value(i));
 				}
-				gprLine("hi", mipsDebug->GetHi());
-				gprLine("lo", mipsDebug->GetLo());
-				gprLine("pc", mipsDebug->GetPC());
-				gprLine("ll", mipsDebug->GetLLBit());
+				gprLine(32, "hi", mipsDebug->GetHi());
+				gprLine(33, "lo", mipsDebug->GetLo());
+				gprLine(34, "pc", mipsDebug->GetPC());
+				gprLine(35, "ll", mipsDebug->GetLLBit());
 				ImGui::EndTable();
 			}
 
@@ -195,6 +244,9 @@ void WaitIDToString(WaitType waitType, SceUID waitID, char *buffer, size_t bufSi
 	case WAITTYPE_SLEEP:
 	case WAITTYPE_HLEDELAY:
 	case WAITTYPE_UMD:
+	case WAITTYPE_NONE:
+	case WAITTYPE_VBLANK:
+	case WAITTYPE_MICINPUT:
 		truncate_cpy(buffer, bufSize, "-");
 		return;
 	default:
@@ -204,7 +256,7 @@ void WaitIDToString(WaitType waitType, SceUID waitID, char *buffer, size_t bufSi
 
 }
 
-void DrawThreadView(ImConfig &cfg) {
+void DrawThreadView(ImConfig &cfg, ImControl &control) {
 	ImGui::SetNextWindowSize(ImVec2(420, 300), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("Threads", &cfg.threadsOpen)) {
 		ImGui::End();
@@ -239,9 +291,9 @@ void DrawThreadView(ImConfig &cfg) {
 				ImGui::OpenPopup("threadPopup");
 			}
 			ImGui::TableNextColumn();
-			ImGui::Text("%08x", thread.curPC);
+			ImClickableAddress(thread.curPC, control, ImCmd::SHOW_IN_CPU_DISASM);
 			ImGui::TableNextColumn();
-			ImGui::Text("%08x", thread.entrypoint);
+			ImClickableAddress(thread.entrypoint, control, ImCmd::SHOW_IN_CPU_DISASM);
 			ImGui::TableNextColumn();
 			ImGui::Text("%d", thread.priority);
 			ImGui::TableNextColumn();
@@ -311,7 +363,7 @@ static void DrawFilesystemBrowser(ImConfig &cfg) {
 		std::string path;
 		char desc[256];
 		fs.system->Describe(desc, sizeof(desc));
-		char fsTitle[256];
+		char fsTitle[512];
 		snprintf(fsTitle, sizeof(fsTitle), "%s - %s", fs.prefix.c_str(), desc);
 		if (ImGui::TreeNode(fsTitle)) {
 			auto system = fs.system;
@@ -691,7 +743,7 @@ void DrawAudioChannels(ImConfig &cfg) {
 	ImGui::End();
 }
 
-void DrawCallStacks(MIPSDebugInterface *debug, bool *open) {
+static void DrawCallStacks(const MIPSDebugInterface *debug, bool *open) {
 	if (!ImGui::Begin("Callstacks", open)) {
 		ImGui::End();
 		return;
@@ -747,7 +799,7 @@ void DrawCallStacks(MIPSDebugInterface *debug, bool *open) {
 	ImGui::End();
 }
 
-void DrawModules(MIPSDebugInterface *debug, ImConfig &cfg) {
+static void DrawModules(const MIPSDebugInterface *debug, ImConfig &cfg) {
 	if (!ImGui::Begin("Modules", &cfg.modulesOpen) || !g_symbolMap) {
 		ImGui::End();
 		return;
@@ -839,6 +891,29 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 		return;
 	}
 
+	// TODO: Pass mipsDebug in where needed instead.
+	g_disassemblyManager.setCpu(mipsDebug);
+	disasm_.View().setDebugger(mipsDebug);
+	for (int i = 0; i < 4; i++) {
+		mem_[i].View().setDebugger(mipsDebug);
+	}
+
+	// Watch the step counters to figure out when to update things.
+
+	if (lastCpuStepCount_ != Core_GetSteppingCounter()) {
+		lastCpuStepCount_ = Core_GetSteppingCounter();
+		disasm_.View().NotifyStep();
+	}
+
+	if (lastGpuStepCount_ != GPUStepping::GetSteppingCounter()) {
+		// A GPU step has happened since last time. This means that we should re-center the cursor.
+		// Snapshot();
+		lastGpuStepCount_ = GPUStepping::GetSteppingCounter();
+		geDebugger_.View().NotifyStep();
+	}
+
+	ImControl control{};
+
 	if (ImGui::BeginMainMenuBar()) {
 		if (ImGui::BeginMenu("Debug")) {
 			switch (coreState) {
@@ -852,10 +927,16 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 					Core_Break("Menu:Break");
 				}
 				break;
+			default:
+				break;
 			}
 			ImGui::Separator();
 			ImGui::MenuItem("Ignore bad memory accesses", nullptr, &g_Config.bIgnoreBadMemAccess);
+			ImGui::MenuItem("Break on frame timeout", nullptr, &g_Config.bBreakOnFrameTimeout);
+			ImGui::MenuItem("Don't break on start", nullptr, &g_Config.bAutoRun);  // should really invert this bool!
+			ImGui::MenuItem("Fast memory", nullptr, &g_Config.bFastMemory);
 			ImGui::Separator();
+
 			/*
 			// Symbol stuff. Move to separate menu?
 			// Doesn't quite seem to work yet.
@@ -886,6 +967,7 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 			if (ImGui::MenuItem("Take screenshot")) {
 				g_TakeScreenshot = true;
 			}
+			ImGui::MenuItem("Save screenshot as .png", nullptr, &g_Config.bScreenshotsAsPNG);
 			if (ImGui::MenuItem("Restart graphics")) {
 				System_PostUIMessage(UIMessage::RESTART_GRAPHICS);
 			}
@@ -902,6 +984,12 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 			ImGui::MenuItem("Callstacks", nullptr, &cfg_.callstackOpen);
 			ImGui::MenuItem("Breakpoints", nullptr, &cfg_.breakpointsOpen);
 			ImGui::MenuItem("Scheduler", nullptr, &cfg_.schedulerOpen);
+			ImGui::Separator();
+			for (int i = 0; i < 4; i++) {
+				char title[64];
+				snprintf(title, sizeof(title), "Memory %d", i + 1);
+				ImGui::MenuItem(title, nullptr, &cfg_.memViewOpen[i]);
+			}
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("HLE")) {
@@ -950,11 +1038,11 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 	}
 
 	if (cfg_.disasmOpen) {
-		disasm_.Draw(mipsDebug, cfg_, coreState);
+		disasm_.Draw(mipsDebug, cfg_, control, coreState);
 	}
 
 	if (cfg_.regsOpen) {
-		DrawRegisterView(mipsDebug, &cfg_.regsOpen);
+		DrawRegisterView(cfg_, control, mipsDebug);
 	}
 
 	if (cfg_.breakpointsOpen) {
@@ -974,7 +1062,7 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 	}
 
 	if (cfg_.threadsOpen) {
-		DrawThreadView(cfg_);
+		DrawThreadView(cfg_, control);
 	}
 
 	if (cfg_.callstackOpen) {
@@ -1014,26 +1102,111 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 	}
 
 	if (cfg_.geDebuggerOpen) {
-		geDebugger_.Draw(cfg_, gpuDebug);
+		geDebugger_.Draw(cfg_, control, gpuDebug);
 	}
 
 	if (cfg_.geStateOpen) {
-		DrawGeStateWindow(cfg_, gpuDebug);
+		geStateWindow_.Draw(cfg_, control, gpuDebug);
 	}
 
 	if (cfg_.schedulerOpen) {
 		DrawSchedulerView(cfg_);
 	}
+
+	for (int i = 0; i < 4; i++) {
+		if (cfg_.memViewOpen[i]) {
+			mem_[i].Draw(mipsDebug, cfg_, control, i);
+		}
+	}
+
+	// Process UI commands
+	switch (control.command.cmd) {
+	case ImCmd::SHOW_IN_CPU_DISASM:
+		disasm_.View().gotoAddr(control.command.param);
+		cfg_.disasmOpen = true;
+		ImGui::SetWindowFocus(disasm_.Title());
+		break;
+	case ImCmd::SHOW_IN_GE_DISASM:
+		geDebugger_.View().GotoAddr(control.command.param);
+		cfg_.geDebuggerOpen = true;
+		ImGui::SetWindowFocus(geDebugger_.Title());
+		break;
+	case ImCmd::SHOW_IN_MEMORY_VIEWER:
+	{
+		u32 index = control.command.param2;
+		_dbg_assert_(index < 4);
+		mem_[index].GotoAddr(control.command.param);
+		cfg_.memViewOpen[index] = true;
+		ImGui::SetWindowFocus(ImMemWindow::Title(index));
+		break;
+	}
+	case ImCmd::TRIGGER_FIND_POPUP:
+		// TODO
+		break;
+	case ImCmd::NONE:
+		break;
+	}
 }
 
-void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, CoreState coreState) {
-	char title[256];
-	snprintf(title, sizeof(title), "%s - Disassembly", "Allegrex MIPS");
+void ImDebugger::Snapshot() {
 
+}
+
+void ImMemWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImControl &control, int index) {
+	ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin(Title(index), &cfg.memViewOpen[index])) {
+		ImGui::End();
+		return;
+	}
+
+	// Toolbars
+
+	ImGui::InputScalar("Go to addr: ", ImGuiDataType_U32, &gotoAddr_, NULL, NULL, "%08X");
+	if (ImGui::IsItemDeactivatedAfterEdit()) {
+		memView_.gotoAddr(gotoAddr_);
+	}
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Go")) {
+		memView_.gotoAddr(gotoAddr_);
+	}
+
+	// Main views - list of interesting addresses to the left, memory view to the right.
+	if (ImGui::BeginChild("addr_list", ImVec2(200.0f, 0.0))) {
+		if (ImGui::Selectable("Scratch")) {
+			GotoAddr(0x00010000);
+		}
+		if (ImGui::Selectable("Kernel RAM")) {
+			GotoAddr(0x08000000);
+		}
+		if (ImGui::Selectable("User RAM")) {
+			GotoAddr(0x08800000);
+		}
+		if (ImGui::Selectable("VRAM")) {
+			GotoAddr(0x08800000);
+		}
+	}
+	ImGui::EndChild();
+	
+	ImGui::SameLine();
+	if (ImGui::BeginChild("memview", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()))) {
+		memView_.Draw(ImGui::GetWindowDrawList());
+	}
+	ImGui::EndChild();
+
+	ImGui::TextUnformatted(memView_.StatusMessage().c_str());
+	ImGui::End();
+}
+
+const char *ImMemWindow::Title(int index) {
+	static const char *const titles[4] = { "Memory 1", "Memory 2", "Memory 3", "Memory 4" };
+	return titles[index];
+}
+
+void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImControl &control, CoreState coreState) {
 	disasmView_.setDebugger(mipsDebug);
 
 	ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin(title, &cfg.disasmOpen, ImGuiWindowFlags_NoNavInputs)) {
+	if (!ImGui::Begin(Title(), &cfg.disasmOpen, ImGuiWindowFlags_NoNavInputs)) {
 		ImGui::End();
 		return;
 	}
@@ -1106,6 +1279,12 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, CoreStat
 	}
 
 	ImGui::SameLine();
+	if (ImGui::SmallButton("Syscall")) {
+		hleDebugBreak();
+		Core_Resume();
+	}
+
+	ImGui::SameLine();
 	ImGui::SmallButton("Skim");
 	if (ImGui::IsItemActive()) {
 		u32 stepSize = disasmView_.getInstructionSizeAt(mipsDebug->GetPC());
@@ -1116,7 +1295,11 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, CoreStat
 
 	ImGui::SameLine();
 	if (ImGui::SmallButton("Goto PC")) {
-		disasmView_.gotoPC();
+		disasmView_.GotoPC();
+	}
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Goto RA")) {
+		disasmView_.GotoRA();
 	}
 
 	if (ImGui::BeginPopup("disSearch")) {
@@ -1153,7 +1336,12 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, CoreStat
 	}
 
 	ImGui::SetNextItemWidth(100);
-	if (ImGui::InputScalar("Go to addr: ", ImGuiDataType_U32, &gotoAddr_, NULL, NULL, "%08X", ImGuiInputTextFlags_EnterReturnsTrue)) {
+	if (ImGui::InputScalar("Go to addr: ", ImGuiDataType_U32, &gotoAddr_, NULL, NULL, "%08X")) {
+		disasmView_.setCurAddress(gotoAddr_);
+		disasmView_.scrollAddressIntoView();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Go")) {
 		disasmView_.setCurAddress(gotoAddr_);
 		disasmView_.scrollAddressIntoView();
 	}
@@ -1200,7 +1388,7 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, CoreStat
 		}
 
 		ImGui::TableSetColumnIndex(1);
-		disasmView_.Draw(ImGui::GetWindowDrawList());
+		disasmView_.Draw(ImGui::GetWindowDrawList(), control);
 		ImGui::EndTable();
 
 		ImGui::TextUnformatted(disasmView_.StatusBarText().c_str());
@@ -1269,6 +1457,11 @@ void ImConfig::SyncConfig(IniFile *ini, bool save) {
 	sync.Sync("geDebuggerOpen", &geDebuggerOpen, false);
 	sync.Sync("geStateOpen", &geStateOpen, false);
 	sync.Sync("schedulerOpen", &schedulerOpen, false);
+	for (int i = 0; i < 4; i++) {
+		char name[64];
+		snprintf(name, sizeof(name), "memory%dOpen", i + 1);
+		sync.Sync(name, &memViewOpen[i], false);
+	}
 
 	sync.SetSection(ini->GetOrCreateSection("Settings"));
 	sync.Sync("displayLatched", &displayLatched, false);

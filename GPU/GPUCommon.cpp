@@ -44,6 +44,7 @@
 #include "GPU/Common/TextureCacheCommon.h"
 #include "GPU/Debugger/Debugger.h"
 #include "GPU/Debugger/Record.h"
+#include "GPU/Debugger/Stepping.h"
 
 void GPUCommon::Flush() {
 	drawEngineCommon_->DispatchFlush();
@@ -97,7 +98,7 @@ void GPUCommon::Reinitialize() {
 	memset(dls, 0, sizeof(dls));
 	for (int i = 0; i < DisplayListMaxCount; ++i) {
 		dls[i].state = PSP_GE_DL_STATE_NONE;
-		dls[i].waitTicks = 0;
+		dls[i].waitUntilTicks = 0;
 	}
 
 	nextListID = 0;
@@ -105,7 +106,6 @@ void GPUCommon::Reinitialize() {
 	isbreak = false;
 	drawCompleteTicks = 0;
 	busyTicks = 0;
-	timeSpentStepping_ = 0.0;
 	interruptsEnabled_ = true;
 
 	if (textureCache_)
@@ -273,7 +273,7 @@ int GPUCommon::ListSync(int listid, int mode) {
 		return SCE_KERNEL_ERROR_ILLEGAL_CONTEXT;
 	}
 
-	if (dl.waitTicks > CoreTiming::GetTicks()) {
+	if (dl.waitUntilTicks > CoreTiming::GetTicks()) {
 		__GeWaitCurrentThread(GPU_SYNC_LIST, listid, "GeListSync");
 	}
 	return PSP_GE_LIST_COMPLETED;
@@ -409,7 +409,7 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 			id = possibleID;
 			break;
 		}
-		if (possibleList.state == PSP_GE_DL_STATE_COMPLETED && possibleList.waitTicks < currentTicks) {
+		if (possibleList.state == PSP_GE_DL_STATE_COMPLETED && possibleList.waitUntilTicks < currentTicks) {
 			id = possibleID;
 		}
 	}
@@ -432,7 +432,7 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 	dl.stackptr = 0;
 	dl.signal = PSP_GE_SIGNAL_NONE;
 	dl.interrupted = false;
-	dl.waitTicks = (u64)-1;
+	dl.waitUntilTicks = (u64)-1;
 	dl.interruptsEnabled = interruptsEnabled_;
 	dl.started = false;
 	dl.offsetAddr = 0;
@@ -489,7 +489,7 @@ u32 GPUCommon::DequeueList(int listid) {
 	else
 		dlQueue.remove(listid);
 
-	dl.waitTicks = 0;
+	dl.waitUntilTicks = 0;
 	__GeTriggerWait(GPU_SYNC_LIST, listid);
 
 	CheckDrawSync();
@@ -615,23 +615,6 @@ u32 GPUCommon::Break(int mode) {
 	return currentList->id;
 }
 
-void GPUCommon::NotifySteppingEnter() {
-	if (coreCollectDebugStats) {
-		timeSteppingStarted_ = time_now_d();
-	}
-}
-void GPUCommon::NotifySteppingExit() {
-	if (coreCollectDebugStats) {
-		if (timeSteppingStarted_ <= 0.0) {
-			ERROR_LOG(Log::G3D, "Mismatched stepping enter/exit.");
-		}
-		double total = time_now_d() - timeSteppingStarted_;
-		_dbg_assert_msg_(total >= 0.0, "Time spent stepping became negative");
-		timeSpentStepping_ += total;
-		timeSteppingStarted_ = 0.0;
-	}
-}
-
 bool GPUCommon::InterpretList(DisplayList &list) {
 	// Initialized to avoid a race condition with bShowDebugStats changing.
 	double start = 0.0;
@@ -683,6 +666,9 @@ bool GPUCommon::InterpretList(DisplayList &list) {
 				FinishDeferred();
 				_dbg_assert_(!GPURecord::IsActive());
 				gpuState = GPUSTATE_BREAK;
+				if (coreCollectDebugStats) {
+					gpuStats.msProcessingDisplayLists += time_now_d() - start;
+				}
 				return false;
 			}
 		}
@@ -706,12 +692,7 @@ bool GPUCommon::InterpretList(DisplayList &list) {
 	list.offsetAddr = gstate_c.offsetAddr;
 
 	if (coreCollectDebugStats) {
-		double total = time_now_d() - start - timeSpentStepping_;
-		_dbg_assert_msg_(total >= 0.0, "Time spent DL processing became negative");
-		hleSetSteppingTime(timeSpentStepping_);
-		DisplayNotifySleep(timeSpentStepping_);
-		timeSpentStepping_ = 0.0;
-		gpuStats.msProcessingDisplayLists += total;
+		gpuStats.msProcessingDisplayLists += time_now_d() - start;
 	}
 	return gpuState == GPUSTATE_DONE || gpuState == GPUSTATE_ERROR;
 }
@@ -855,7 +836,7 @@ DLResult GPUCommon::ProcessDLQueue() {
 
 	for (int listIndex = GetNextListIndex(); listIndex != -1; listIndex = GetNextListIndex()) {
 		DisplayList &l = dls[listIndex];
-		DEBUG_LOG(Log::G3D, "Starting DL execution at %08x - stall = %08x (startingTicks=%d)", l.pc, l.stall, startingTicks);
+		DEBUG_LOG(Log::G3D, "%s DL execution at %08x - stall = %08x (startingTicks=%d)", l.pc == l.startpc ? "Starting" : "Resuming", l.pc, l.stall, startingTicks);
 		if (!InterpretList(l)) {
 			switch (gpuState) {
 			case GPURunState::GPUSTATE_STALL:
@@ -1176,9 +1157,9 @@ void GPUCommon::Execute_End(u32 op, u32 diff) {
 				currentList->pendingInterrupt = true;
 			} else {
 				currentList->state = PSP_GE_DL_STATE_COMPLETED;
-				currentList->waitTicks = startingTicks + cyclesExecuted;
-				busyTicks = std::max(busyTicks, currentList->waitTicks);
-				__GeTriggerSync(GPU_SYNC_LIST, currentList->id, currentList->waitTicks);
+				currentList->waitUntilTicks = startingTicks + cyclesExecuted;
+				busyTicks = std::max(busyTicks, currentList->waitUntilTicks);
+				__GeTriggerSync(GPU_SYNC_LIST, currentList->id, currentList->waitUntilTicks);
 			}
 			break;
 		}
@@ -1419,7 +1400,7 @@ struct DisplayList_v1 {
 	DisplayListStackEntry stack[32];
 	int stackptr;
 	bool interrupted;
-	u64 waitTicks;
+	u64 waitUntilTicks;
 	bool interruptsEnabled;
 	bool pendingInterrupt;
 	bool started;
@@ -1440,7 +1421,7 @@ struct DisplayList_v2 {
 	DisplayListStackEntry stack[32];
 	int stackptr;
 	bool interrupted;
-	u64 waitTicks;
+	u64 waitUntilTicks;
 	bool interruptsEnabled;
 	bool pendingInterrupt;
 	bool started;
@@ -1547,7 +1528,7 @@ void GPUCommon::InterruptEnd(int listid) {
 			gstate.Restore(dl.context);
 			ReapplyGfxState();
 		}
-		dl.waitTicks = 0;
+		dl.waitUntilTicks = 0;
 		__GeTriggerWait(GPU_SYNC_LIST, listid);
 
 		// Make sure the list isn't still queued since it's now completed.
@@ -1688,7 +1669,7 @@ u32 GPUCommon::GetIndexAddress() {
 	return gstate_c.indexAddr;
 }
 
-GPUgstate GPUCommon::GetGState() {
+const GPUgstate &GPUCommon::GetGState() {
 	return gstate;
 }
 

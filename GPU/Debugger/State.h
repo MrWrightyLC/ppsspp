@@ -6,48 +6,9 @@
 
 #include "Common/CommonTypes.h"
 
-// Extracted from Windows/GE Debugger/TabState.cpp
-
-enum CmdFormatType {
-	CMD_FMT_HEX = 0,
-	CMD_FMT_NUM,
-	CMD_FMT_FLOAT24,
-	CMD_FMT_PTRWIDTH,
-	CMD_FMT_XY,
-	CMD_FMT_XYXY,
-	CMD_FMT_XYZ,
-	CMD_FMT_XYPLUS1,
-	CMD_FMT_TEXSIZE,
-	CMD_FMT_F16_XY,
-	CMD_FMT_VERTEXTYPE,
-	CMD_FMT_TEXFMT,
-	CMD_FMT_CLUTFMT,
-	CMD_FMT_COLORTEST,
-	CMD_FMT_ALPHATEST,
-	CMD_FMT_STENCILTEST,
-	CMD_FMT_ZTEST,
-	CMD_FMT_OFFSETADDR,
-	CMD_FMT_VADDR,
-	CMD_FMT_IADDR,
-	CMD_FMT_MATERIALUPDATE,
-	CMD_FMT_STENCILOP,
-	CMD_FMT_BLENDMODE,
-	CMD_FMT_FLAG,
-	CMD_FMT_CLEARMODE,
-	CMD_FMT_TEXFUNC,
-	CMD_FMT_TEXMODE,
-	CMD_FMT_LOGICOP,
-	CMD_FMT_TEXWRAP,
-	CMD_FMT_TEXLEVEL,
-	CMD_FMT_TEXFILTER,
-	CMD_FMT_TEXMAPMODE,
-	CMD_FMT_TEXSHADELS,
-	CMD_FMT_SHADEMODEL,
-	CMD_FMT_LIGHTMODE,
-	CMD_FMT_LIGHTTYPE,
-	CMD_FMT_CULL,
-	CMD_FMT_PATCHPRIMITIVE,
-};
+#include "GPU/Debugger/GECommandTable.h"
+#include "GPU/Common/SplineCommon.h"
+#include "GPU/Common/GPUDebugInterface.h"
 
 enum VertexListCols {
 	VERTEXLIST_COL_X,
@@ -64,19 +25,10 @@ enum VertexListCols {
 
 class GPUDebugInterface;
 
-struct TabStateRow {
-	std::string_view title;
-	uint8_t cmd;
-	CmdFormatType fmt;
-	uint8_t enableCmd;
-	uint8_t otherCmd;
-	uint8_t otherCmd2;
-};
-
-extern const TabStateRow g_stateFlagsRows[];
-extern const TabStateRow g_stateLightingRows[];
-extern const TabStateRow g_stateTextureRows[];
-extern const TabStateRow g_stateSettingsRows[];
+extern const GECommand g_stateFlagsRows[];
+extern const GECommand g_stateLightingRows[];
+extern const GECommand g_stateTextureRows[];
+extern const GECommand g_stateSettingsRows[];
 extern const size_t g_stateFlagsRowsSize;
 extern const size_t g_stateLightingRowsSize;
 extern const size_t g_stateTextureRowsSize;
@@ -88,3 +40,11 @@ class VertexDecoder;
 void FormatStateRow(GPUDebugInterface *debug, char *dest, size_t destSize, CmdFormatType fmt, u32 value, bool enabled, u32 otherValue, u32 otherValue2);
 void FormatVertCol(char *dest, size_t destSize, const GPUDebugVertex &vert, int col);
 void FormatVertColRaw(VertexDecoder *decoder, char *dest, size_t destSize, int row, int col);
+
+
+// These are utilities used by the debugger vertex preview.
+
+// Later I hope to re-use more of the real logic.
+bool GetPrimPreview(u32 op, int which, GEPrimitiveType &prim, std::vector<GPUDebugVertex> &vertices, std::vector<u16> &indices, int &count);
+void DescribePixel(u32 pix, GPUDebugBufferFormat fmt, int x, int y, char desc[256]);
+void DescribePixelRGBA(u32 pix, GPUDebugBufferFormat fmt, int x, int y, char desc[256]);

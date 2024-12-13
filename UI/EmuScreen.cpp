@@ -1554,7 +1554,7 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 		// Hopefully, after running, coreState is now CORE_NEXTFRAME
 		switch (coreState) {
 		case CORE_NEXTFRAME:
-			// Reached the end of the frame, all good. Set back to running for the next frame
+			// Reached the end of the frame while running at full blast, all good. Set back to running for the next frame
 			coreState = CORE_RUNNING_CPU;
 			flags |= ScreenRenderFlags::HANDLED_THROTTLING;
 			break;
@@ -1685,6 +1685,8 @@ void EmuScreen::renderImDebugger() {
 			io.AddKeyEvent(ImGuiMod_Shift, keyShiftLeft_ || keyShiftRight_);
 			io.AddKeyEvent(ImGuiMod_Alt, keyAltLeft_ || keyAltRight_);
 			// io.AddKeyEvent(ImGuiMod_Super, e.key.super);
+
+			ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
 
 			imDebugger_->Frame(currentDebugMIPS, gpuDebug);
 

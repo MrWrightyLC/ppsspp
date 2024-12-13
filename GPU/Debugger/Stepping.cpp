@@ -21,6 +21,7 @@
 #include "Common/Log.h"
 #include "Common/Thread/ThreadUtil.h"
 #include "Core/Core.h"
+#include "Core/HW/Display.h"
 #include "GPU/Common/GPUDebugInterface.h"
 #include "GPU/Debugger/Stepping.h"
 #include "GPU/GPUState.h"
@@ -43,6 +44,10 @@ enum PauseAction {
 static bool isStepping;
 // Number of times we've entered stepping, to detect a resume asynchronously.
 static int stepCounter = 0;
+
+// Debug stats.
+static double g_timeSteppingStarted;
+static double g_timeSpentStepping;
 
 static std::mutex pauseLock;
 static PauseAction pauseAction = PAUSE_CONTINUE;
@@ -102,7 +107,7 @@ static void RunPauseAction() {
 		return;
 	}
 
-	INFO_LOG(Log::G3D, "RunPauseAction: %s", PauseActionToString(pauseAction));
+	DEBUG_LOG(Log::GeDebugger, "RunPauseAction: %s", PauseActionToString(pauseAction));
 
 	switch (pauseAction) {
 	case PAUSE_BREAK:
@@ -141,7 +146,8 @@ static void RunPauseAction() {
 		break;
 
 	default:
-		ERROR_LOG(Log::G3D, "Unsupported pause action, forgot to add it to the switch.");
+		ERROR_LOG(Log::GeDebugger, "Unsupported pause action, forgot to add it to the switch.");
+		break;
 	}
 
 	actionComplete = true;
@@ -161,13 +167,11 @@ static void StartStepping() {
 		// Play it safe so we don't keep resetting.
 		lastGState.cmdmem[1] |= 0x01000000;
 	}
-	gpuDebug->NotifySteppingEnter();
 	isStepping = true;
 	stepCounter++;
 }
 
 static void StopStepping() {
-	gpuDebug->NotifySteppingExit();
 	lastGState = gstate;
 	isStepping = false;
 }
@@ -185,7 +189,7 @@ bool ProcessStepping() {
 
 	if (pauseAction == PAUSE_CONTINUE) {
 		// This is fine, can just mean to run to the next breakpoint/event.
-		INFO_LOG(Log::G3D, "Continuing...");
+		DEBUG_LOG(Log::GeDebugger, "Continuing...");
 		actionComplete = true;
 		actionWait.notify_all();
 		coreState = CORE_RUNNING_GE;

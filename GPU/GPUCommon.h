@@ -125,7 +125,7 @@ struct DisplayList {
 	DisplayListStackEntry stack[32];
 	int stackptr;
 	bool interrupted;
-	u64 waitTicks;
+	u64 waitUntilTicks;
 	bool interruptsEnabled;
 	bool pendingInterrupt;
 	bool started;
@@ -349,13 +349,10 @@ public:
 	GPUDebugOp DisassembleOp(u32 pc, u32 op) override;
 	std::vector<GPUDebugOp> DisassembleOpRange(u32 startpc, u32 endpc) override;
 
-	void NotifySteppingEnter() override;
-	void NotifySteppingExit() override;
-
 	u32 GetRelativeAddress(u32 data) override;
 	u32 GetVertexAddress() override;
 	u32 GetIndexAddress() override;
-	GPUgstate GetGState() override;
+	const GPUgstate &GetGState() override;
 	void SetCmdValue(u32 op) override;
 
 	DisplayList* getList(int listid) {
@@ -371,7 +368,7 @@ public:
 
 	s64 GetListTicks(int listid) const {
 		if (listid >= 0 && listid < DisplayListMaxCount) {
-			return dls[listid].waitTicks;
+			return dls[listid].waitUntilTicks;
 		}
 		return -1;
 	}
@@ -510,8 +507,4 @@ private:
 	void PopDLQueue();
 	void CheckDrawSync();
 	int  GetNextListIndex();
-
-	// Debug stats.
-	double timeSteppingStarted_;
-	double timeSpentStepping_;
 };
