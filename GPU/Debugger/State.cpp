@@ -12,6 +12,9 @@
 #include "Core/System.h"
 
 void FormatStateRow(GPUDebugInterface *gpudebug, char *dest, size_t destSize, CmdFormatType fmt, u32 value, bool enabled, u32 otherValue, u32 otherValue2) {
+	value &= 0xFFFFFF;
+	otherValue &= 0xFFFFFF;
+	otherValue2 &= 0xFFFFFF;
 	switch (fmt) {
 	case CMD_FMT_HEX:
 		snprintf(dest, destSize, "%06x", value);
@@ -831,7 +834,7 @@ static void ExpandSpline(int &count, int op, const std::vector<SimpleVertex> &si
 	FreeAlignedMemory(cpoints.col);
 }
 
-bool GetPrimPreview(u32 op, int which, GEPrimitiveType &prim, std::vector<GPUDebugVertex> &vertices, std::vector<u16> &indices, int &count) {
+bool GetPrimPreview(u32 op, GEPrimitiveType &prim, std::vector<GPUDebugVertex> &vertices, std::vector<u16> &indices, int &count) {
 	u32 prim_type = GE_PRIM_INVALID;
 	int count_u = 0;
 	int count_v = 0;
@@ -842,8 +845,7 @@ bool GetPrimPreview(u32 op, int which, GEPrimitiveType &prim, std::vector<GPUDeb
 		count = op & 0xFFFF;
 	} else {
 		const GEPrimitiveType primLookup[] = { GE_PRIM_TRIANGLES, GE_PRIM_LINES, GE_PRIM_POINTS, GE_PRIM_POINTS };
-		if (gstate.getPatchPrimitiveType() < ARRAY_SIZE(primLookup))
-			prim_type = primLookup[gstate.getPatchPrimitiveType()];
+		prim_type = primLookup[gstate.getPatchPrimitiveType()];
 		count_u = (op & 0x00FF) >> 0;
 		count_v = (op & 0xFF00) >> 8;
 		count = count_u * count_v;
@@ -857,13 +859,13 @@ bool GetPrimPreview(u32 op, int which, GEPrimitiveType &prim, std::vector<GPUDeb
 		ERROR_LOG(Log::G3D, "Invalid debugging environment, shutting down?");
 		return false;
 	}
-	if (count == 0 || which == 0) {
+	if (count == 0) {
 		return false;
 	}
 
 	prim = static_cast<GEPrimitiveType>(prim_type);
 
-	if (!gpuDebug->GetCurrentSimpleVertices(count, vertices, indices)) {
+	if (!gpuDebug->GetCurrentDrawAsDebugVertices(count, vertices, indices)) {
 		ERROR_LOG(Log::G3D, "Vertex preview not yet supported");
 		return false;
 	}

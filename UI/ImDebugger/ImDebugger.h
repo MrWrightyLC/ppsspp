@@ -36,6 +36,9 @@ public:
 	ImDisasmView &View() {
 		return disasmView_;
 	}
+	void NotifyStep() {
+		disasmView_.NotifyStep();
+	}
 	void DirtySymbolMap() {
 		symsDirty_ = true;
 	}
@@ -73,6 +76,7 @@ public:
 		symsDirty_ = true;
 	}
 	void GotoAddr(u32 addr) {
+		gotoAddr_ = addr;
 		memView_.gotoAddr(addr);
 	}
 	static const char *Title(int index);
@@ -95,12 +99,27 @@ private:
 	u32 gotoAddr_ = 0x08800000;
 };
 
+// Snapshot of the MIPS CPU and other things we want to show diffs off.
+struct ImSnapshotState {
+	u32 gpr[32];
+	float fpr[32];
+	float vpr[128];
+	u32 pc;
+	u32 lo;
+	u32 hi;
+	u32 ll;
+};
+
+class IniFile;
+
 struct ImConfig {
 	// Defaults for saved settings are set in SyncConfig.
 
 	bool disasmOpen;
 	bool demoOpen;
-	bool regsOpen;
+	bool gprOpen;
+	bool fprOpen;
+	bool vfpuOpen;
 	bool threadsOpen;
 	bool callstackOpen;
 	bool breakpointsOpen;
@@ -119,6 +138,8 @@ struct ImConfig {
 	bool geDebuggerOpen;
 	bool geStateOpen;
 	bool schedulerOpen;
+	bool watchOpen;
+	bool pixelViewerOpen;
 	bool memViewOpen[4];
 
 	// HLE explorer settings
@@ -131,6 +152,9 @@ struct ImConfig {
 	int selectedBreakpoint = -1;
 	int selectedMemCheck = -1;
 	uint64_t selectedTexAddr = 0;
+
+	bool realtimePixelPreview = false;
+	int breakCount = 0;
 
 	bool displayLatched = false;
 
@@ -147,12 +171,14 @@ enum class ImCmd {
 	SHOW_IN_CPU_DISASM,
 	SHOW_IN_GE_DISASM,
 	SHOW_IN_MEMORY_VIEWER,  // param is address, param2 is viewer index
+	SHOW_IN_PIXEL_VIEWER,  // param is address, param2 is stride, |0x80000000 if depth, param3 is w/h
 };
 
 struct ImCommand {
 	ImCmd cmd;
 	uint32_t param;
 	uint32_t param2;
+	uint32_t param3;
 };
 
 struct ImControl {
@@ -164,11 +190,12 @@ public:
 	ImDebugger();
 	~ImDebugger();
 
-	void Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebug);
+	void Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebug, Draw::DrawContext *draw);
 
 	// Should be called just before starting a step or run, so that things can
 	// save state that they can later compare with, to highlight changes.
-	void Snapshot();
+	void Snapshot(MIPSState *mips);
+	void SnapshotGPU(GPUDebugInterface *mips);
 
 private:
 	Path ConfigPath();
@@ -180,6 +207,10 @@ private:
 	ImGeStateWindow geStateWindow_;
 	ImMemWindow mem_[4];  // We support 4 separate instances of the memory viewer.
 	ImStructViewer structViewer_;
+	ImGePixelViewerWindow pixelViewer_;
+
+	ImSnapshotState newSnapshot_;
+	ImSnapshotState snapshot_;
 
 	int lastCpuStepCount_ = -1;
 	int lastGpuStepCount_ = -1;
@@ -192,3 +223,4 @@ private:
 void ImClickableAddress(uint32_t addr, ImControl &control, ImCmd cmd);
 void ShowInWindowMenuItems(uint32_t addr, ImControl &control);
 void ShowInMemoryViewerMenuItem(uint32_t addr, ImControl &control);
+void StatusBar(std::string_view str);

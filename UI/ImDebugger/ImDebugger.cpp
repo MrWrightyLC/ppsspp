@@ -64,6 +64,17 @@ void ShowInWindowMenuItems(uint32_t addr, ImControl &control) {
 	}
 }
 
+void StatusBar(std::string_view status) {
+	if (!status.size()) {
+		return;
+	}
+	ImGui::TextUnformatted(status.data(), status.data() + status.length());
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Copy")) {
+		System_CopyStringToClipboard(status);
+	}
+}
+
 // TODO: Style it.
 // Left click performs the preferred action, if any. Right click opens a menu for more.
 void ImClickableAddress(uint32_t addr, ImControl &control, ImCmd cmd) {
@@ -112,85 +123,125 @@ void DrawSchedulerView(ImConfig &cfg) {
 	ImGui::End();
 }
 
-void DrawRegisterView(ImConfig &config, ImControl &control, const MIPSDebugInterface *mipsDebug) {
+static void DrawGPRs(ImConfig &config, ImControl &control, const MIPSDebugInterface *mipsDebug, const ImSnapshotState &prev) {
 	ImGui::SetNextWindowSize(ImVec2(320, 600), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Registers", &config.regsOpen)) {
+	if (!ImGui::Begin("MIPS GPRs", &config.gprOpen)) {
 		ImGui::End();
 		return;
 	}
 
-	if (ImGui::BeginTabBar("RegisterGroups", ImGuiTabBarFlags_None)) {
-		if (ImGui::BeginTabItem("GPR")) {
-			if (ImGui::BeginTable("gpr", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersH)) {
-				ImGui::TableSetupColumn("regname", ImGuiTableColumnFlags_WidthFixed);
-				ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthFixed);
-				ImGui::TableSetupColumn("value_i", ImGuiTableColumnFlags_WidthStretch);
+	bool noDiff = coreState == CORE_RUNNING_CPU || coreState == CORE_STEPPING_GE;
 
-				auto gprLine = [&](int index, const char *regname, int value) {
-					ImGui::TableNextRow();
-					ImGui::TableNextColumn();
-					ImGui::TextUnformatted(regname);
-					ImGui::TableNextColumn();
-					if (Memory::IsValid4AlignedAddress(value)) {
-						ImGui::PushID(index);
-						ImClickableAddress(value, control, index == MIPS_REG_RA ? ImCmd::SHOW_IN_CPU_DISASM : ImCmd::SHOW_IN_MEMORY_VIEWER);
-						ImGui::PopID();
-					} else {
-						ImGui::Text("%08x", value);
-					}
-					if (value >= -1000000 && value <= 1000000) {
-						ImGui::TableSetColumnIndex(2);
-						ImGui::Text("%d", value);
-					}
-				};
-				for (int i = 0; i < 32; i++) {
-					gprLine(i, mipsDebug->GetRegName(0, i).c_str(), mipsDebug->GetGPR32Value(i));
-				}
-				gprLine(32, "hi", mipsDebug->GetHi());
-				gprLine(33, "lo", mipsDebug->GetLo());
-				gprLine(34, "pc", mipsDebug->GetPC());
-				gprLine(35, "ll", mipsDebug->GetLLBit());
-				ImGui::EndTable();
+	if (ImGui::BeginTable("gpr", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersH)) {
+		ImGui::TableSetupColumn("Reg", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Decimal", ImGuiTableColumnFlags_WidthStretch);
+
+		ImGui::TableHeadersRow();
+
+		auto gprLine = [&](int index, const char *regname, int value, int prevValue) {
+			bool diff = value != prevValue && !noDiff;
+			bool disabled = value == 0xdeadbeef;
+
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(regname);
+			ImGui::TableNextColumn();
+			if (diff) {
+				ImGui::PushStyleColor(ImGuiCol_Text, !disabled ? ImDebuggerColor_Diff : ImDebuggerColor_DiffAlpha);
+			} else if (disabled) {
+				ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 128));
 			}
-
-			ImGui::EndTabItem();
-		}
-		if (ImGui::BeginTabItem("FPU")) {
-			if (ImGui::BeginTable("fpr", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersH)) {
-				ImGui::TableSetupColumn("regname", ImGuiTableColumnFlags_WidthFixed);
-				ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthFixed);
-				ImGui::TableSetupColumn("value_i", ImGuiTableColumnFlags_WidthStretch);
-
-				// fpcond
-				ImGui::TableNextRow();
-				ImGui::TableNextColumn();
-				ImGui::TextUnformatted("fpcond");
-				ImGui::TableNextColumn();
-				ImGui::Text("%08x", mipsDebug->GetFPCond());
-
-				for (int i = 0; i < 32; i++) {
-					float fvalue = mipsDebug->GetFPR32Value(i);
-					u32 fivalue;
-					memcpy(&fivalue, &fvalue, sizeof(fivalue));
-					ImGui::TableNextRow();
-					ImGui::TableNextColumn();
-					ImGui::TextUnformatted(mipsDebug->GetRegName(1, i).c_str());
-					ImGui::TableNextColumn();
-					ImGui::Text("%0.7f", fvalue);
-					ImGui::TableNextColumn();
-					ImGui::Text("%08x", fivalue);
-				}
-
-				ImGui::EndTable();
+			if (Memory::IsValid4AlignedAddress(value)) {
+				ImGui::PushID(index);
+				ImClickableAddress(value, control, index == MIPS_REG_RA ? ImCmd::SHOW_IN_CPU_DISASM : ImCmd::SHOW_IN_MEMORY_VIEWER);
+				ImGui::PopID();
+			} else {
+				ImGui::Text("%08x", value);
 			}
-			ImGui::EndTabItem();
+			ImGui::TableNextColumn();
+			if (value >= -1000000 && value <= 1000000) {
+				ImGui::Text("%d", value);
+			}
+			if (diff || disabled) {
+				ImGui::PopStyleColor();
+			}
+		};
+		for (int i = 0; i < 32; i++) {
+			ImGui::TableNextRow();
+			gprLine(i, mipsDebug->GetRegName(0, i).c_str(), mipsDebug->GetGPR32Value(i), prev.gpr[i]);
 		}
-		if (ImGui::BeginTabItem("VFPU")) {
-			ImGui::Text("TODO");
-			ImGui::EndTabItem();
-		}
-		ImGui::EndTabBar();
+		ImGui::TableNextRow();
+		gprLine(32, "hi", mipsDebug->GetHi(), prev.hi);
+		ImGui::TableNextRow();
+		gprLine(33, "lo", mipsDebug->GetLo(), prev.lo);
+		ImGui::TableNextRow();
+		gprLine(34, "pc", mipsDebug->GetPC(), prev.pc);
+		ImGui::TableNextRow();
+		gprLine(35, "ll", mipsDebug->GetLLBit(), prev.ll);
+		ImGui::EndTable();
 	}
+	ImGui::End();
+}
+
+static void DrawFPRs(ImConfig &config, ImControl &control, const MIPSDebugInterface *mipsDebug, const ImSnapshotState &prev) {
+	ImGui::SetNextWindowSize(ImVec2(320, 600), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("MIPS FPRs", &config.fprOpen)) {
+		ImGui::End();
+		return;
+	}
+
+	bool noDiff = coreState == CORE_RUNNING_CPU || coreState == CORE_STEPPING_GE;
+
+	if (ImGui::BeginTable("fpr", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersH)) {
+		ImGui::TableSetupColumn("Reg", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Hex", ImGuiTableColumnFlags_WidthStretch);
+
+		ImGui::TableHeadersRow();
+
+		// fpcond
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		ImGui::TextUnformatted("fpcond");
+		ImGui::TableNextColumn();
+		ImGui::Text("%08x", mipsDebug->GetFPCond());
+
+		for (int i = 0; i < 32; i++) {
+			float fvalue = mipsDebug->GetFPR32Value(i);
+			float prevValue = prev.fpr[i];
+
+			// NOTE: Using memcmp to avoid NaN problems.
+			bool diff = memcmp(&fvalue, &prevValue, 4) != 0 && !noDiff;
+
+			u32 fivalue;
+			memcpy(&fivalue, &fvalue, sizeof(fivalue));
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			if (diff) {
+				ImGui::PushStyleColor(ImGuiCol_Text, ImDebuggerColor_Diff);
+			}
+			ImGui::TextUnformatted(mipsDebug->GetRegName(1, i).c_str());
+			ImGui::TableNextColumn();
+			ImGui::Text("%0.7f", fvalue);
+			ImGui::TableNextColumn();
+			ImGui::Text("%08x", fivalue);
+			if (diff) {
+				ImGui::PopStyleColor();
+			}
+		}
+
+		ImGui::EndTable();
+	}
+	ImGui::End();
+}
+
+static void DrawVFPU(ImConfig &config, ImControl &control, const MIPSDebugInterface *mipsDebug, const ImSnapshotState &prev) {
+	ImGui::SetNextWindowSize(ImVec2(320, 600), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("MIPS VFPU regs", &config.vfpuOpen)) {
+		ImGui::End();
+		return;
+	}
+	ImGui::Text("TODO");
 	ImGui::End();
 }
 
@@ -879,7 +930,7 @@ ImDebugger::~ImDebugger() {
 	cfg_.SaveConfig(ConfigPath());
 }
 
-void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebug) {
+void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebug, Draw::DrawContext *draw) {
 	// Snapshot the coreState to avoid inconsistency.
 	const CoreState coreState = ::coreState;
 
@@ -902,14 +953,17 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 
 	if (lastCpuStepCount_ != Core_GetSteppingCounter()) {
 		lastCpuStepCount_ = Core_GetSteppingCounter();
-		disasm_.View().NotifyStep();
+		snapshot_ = newSnapshot_;  // Compare against the previous snapshot.
+		Snapshot(currentMIPS);
+		disasm_.NotifyStep();
 	}
 
 	if (lastGpuStepCount_ != GPUStepping::GetSteppingCounter()) {
 		// A GPU step has happened since last time. This means that we should re-center the cursor.
 		// Snapshot();
 		lastGpuStepCount_ = GPUStepping::GetSteppingCounter();
-		geDebugger_.View().NotifyStep();
+		SnapshotGPU(gpuDebug);
+		geDebugger_.NotifyStep();
 	}
 
 	ImControl control{};
@@ -980,7 +1034,9 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 		}
 		if (ImGui::BeginMenu("CPU")) {
 			ImGui::MenuItem("CPU debugger", nullptr, &cfg_.disasmOpen);
-			ImGui::MenuItem("Registers", nullptr, &cfg_.regsOpen);
+			ImGui::MenuItem("GPR regs", nullptr, &cfg_.gprOpen);
+			ImGui::MenuItem("FPR regs", nullptr, &cfg_.fprOpen);
+			ImGui::MenuItem("VFPU regs", nullptr, &cfg_.vfpuOpen);
 			ImGui::MenuItem("Callstacks", nullptr, &cfg_.callstackOpen);
 			ImGui::MenuItem("Breakpoints", nullptr, &cfg_.breakpointsOpen);
 			ImGui::MenuItem("Scheduler", nullptr, &cfg_.schedulerOpen);
@@ -1005,6 +1061,7 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 			ImGui::MenuItem("Display Output", nullptr, &cfg_.displayOpen);
 			ImGui::MenuItem("Textures", nullptr, &cfg_.texturesOpen);
 			ImGui::MenuItem("Framebuffers", nullptr, &cfg_.framebuffersOpen);
+			ImGui::MenuItem("Pixel Viewer", nullptr, &cfg_.pixelViewerOpen);
 			// More to come here...
 			ImGui::EndMenu();
 		}
@@ -1041,8 +1098,16 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 		disasm_.Draw(mipsDebug, cfg_, control, coreState);
 	}
 
-	if (cfg_.regsOpen) {
-		DrawRegisterView(cfg_, control, mipsDebug);
+	if (cfg_.gprOpen) {
+		DrawGPRs(cfg_, control, mipsDebug, snapshot_);
+	}
+
+	if (cfg_.fprOpen) {
+		DrawFPRs(cfg_, control, mipsDebug, snapshot_);
+	}
+
+	if (cfg_.vfpuOpen) {
+		DrawVFPU(cfg_, control, mipsDebug, snapshot_);
 	}
 
 	if (cfg_.breakpointsOpen) {
@@ -1102,7 +1167,7 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 	}
 
 	if (cfg_.geDebuggerOpen) {
-		geDebugger_.Draw(cfg_, control, gpuDebug);
+		geDebugger_.Draw(cfg_, control, gpuDebug, draw);
 	}
 
 	if (cfg_.geStateOpen) {
@@ -1111,6 +1176,10 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 
 	if (cfg_.schedulerOpen) {
 		DrawSchedulerView(cfg_);
+	}
+
+	if (cfg_.pixelViewerOpen) {
+		pixelViewer_.Draw(cfg_, control, gpuDebug, draw);
 	}
 
 	for (int i = 0; i < 4; i++) {
@@ -1148,8 +1217,19 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 	}
 }
 
-void ImDebugger::Snapshot() {
+void ImDebugger::Snapshot(MIPSState *mips) {
+	memcpy(newSnapshot_.gpr, mips->r, sizeof(newSnapshot_.gpr));
+	memcpy(newSnapshot_.fpr, mips->fs, sizeof(newSnapshot_.fpr));
+	memcpy(newSnapshot_.vpr, mips->v, sizeof(newSnapshot_.vpr));
+	newSnapshot_.pc = mips->pc;
+	newSnapshot_.lo = mips->lo;
+	newSnapshot_.hi = mips->hi;
+	newSnapshot_.ll = mips->llBit;
+	pixelViewer_.Snapshot();
+}
 
+void ImDebugger::SnapshotGPU(GPUDebugInterface *gpuDebug) {
+	pixelViewer_.Snapshot();
 }
 
 void ImMemWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImControl &control, int index) {
@@ -1170,8 +1250,10 @@ void ImMemWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImControl &
 		memView_.gotoAddr(gotoAddr_);
 	}
 
+	ImVec2 size(0, -ImGui::GetFrameHeightWithSpacing());
+
 	// Main views - list of interesting addresses to the left, memory view to the right.
-	if (ImGui::BeginChild("addr_list", ImVec2(200.0f, 0.0))) {
+	if (ImGui::BeginChild("addr_list", ImVec2(200.0f, size.y), ImGuiChildFlags_ResizeX)) {
 		if (ImGui::Selectable("Scratch")) {
 			GotoAddr(0x00010000);
 		}
@@ -1182,18 +1264,19 @@ void ImMemWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImControl &
 			GotoAddr(0x08800000);
 		}
 		if (ImGui::Selectable("VRAM")) {
-			GotoAddr(0x08800000);
+			GotoAddr(0x04000000);
 		}
 	}
 	ImGui::EndChild();
 	
 	ImGui::SameLine();
-	if (ImGui::BeginChild("memview", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()))) {
+	if (ImGui::BeginChild("memview", size)) {
 		memView_.Draw(ImGui::GetWindowDrawList());
 	}
 	ImGui::EndChild();
 
-	ImGui::TextUnformatted(memView_.StatusMessage().c_str());
+	StatusBar(memView_.StatusMessage());
+
 	ImGui::End();
 }
 
@@ -1206,7 +1289,7 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImContro
 	disasmView_.setDebugger(mipsDebug);
 
 	ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin(Title(), &cfg.disasmOpen, ImGuiWindowFlags_NoNavInputs)) {
+	if (!ImGui::Begin(Title(), &cfg.disasmOpen)) {
 		ImGui::End();
 		return;
 	}
@@ -1273,10 +1356,11 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImContro
 		Core_RequestCPUStep(CPUStepType::Out, 0);
 	}
 
+	/*
 	ImGui::SameLine();
 	if (ImGui::SmallButton("Frame")) {
 		Core_RequestCPUStep(CPUStepType::Frame, 0);
-	}
+	}*/
 
 	ImGui::SameLine();
 	if (ImGui::SmallButton("Syscall")) {
@@ -1346,12 +1430,10 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImContro
 		disasmView_.scrollAddressIntoView();
 	}
 
-	if (ImGui::BeginTable("main", 2)) {
-		ImGui::TableSetupColumn("left", ImGuiTableColumnFlags_WidthFixed);
-		ImGui::TableSetupColumn("right", ImGuiTableColumnFlags_WidthStretch);
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
+	ImVec2 avail = ImGui::GetContentRegionAvail();
+	avail.y -= ImGui::GetTextLineHeightWithSpacing();
 
+	if (ImGui::BeginChild("left", ImVec2(150.0f, avail.y), ImGuiChildFlags_ResizeX)) {
 		if (symCache_.empty() || symsDirty_) {
 			symCache_ = g_symbolMap->GetAllSymbols(SymbolType::ST_FUNCTION);
 			symsDirty_ = false;
@@ -1369,8 +1451,7 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImContro
 			}
 		}
 
-		ImVec2 sz = ImGui::GetContentRegionAvail();
-		if (ImGui::BeginListBox("##symbols", ImVec2(150.0, sz.y - ImGui::GetTextLineHeightWithSpacing() * 2))) {
+		if (ImGui::BeginListBox("##symbols", ImGui::GetContentRegionAvail())) {
 			ImGuiListClipper clipper;
 			clipper.Begin((int)symCache_.size(), -1);
 			while (clipper.Step()) {
@@ -1386,13 +1467,16 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImContro
 			clipper.End();
 			ImGui::EndListBox();
 		}
-
-		ImGui::TableSetColumnIndex(1);
-		disasmView_.Draw(ImGui::GetWindowDrawList(), control);
-		ImGui::EndTable();
-
-		ImGui::TextUnformatted(disasmView_.StatusBarText().c_str());
 	}
+	ImGui::EndChild();
+
+	ImGui::SameLine();
+	if (ImGui::BeginChild("right", ImVec2(0.0f, avail.y))) {
+		disasmView_.Draw(ImGui::GetWindowDrawList(), control);
+	}
+	ImGui::EndChild();
+
+	StatusBar(disasmView_.StatusBarText());
 	ImGui::End();
 }
 
@@ -1438,7 +1522,9 @@ void ImConfig::SyncConfig(IniFile *ini, bool save) {
 	sync.SetSection(ini->GetOrCreateSection("Windows"));
 	sync.Sync("disasmOpen", &disasmOpen, true);
 	sync.Sync("demoOpen ", &demoOpen, false);
-	sync.Sync("regsOpen", &regsOpen, true);
+	sync.Sync("gprOpen", &gprOpen, false);
+	sync.Sync("fprOpen", &fprOpen, false);
+	sync.Sync("vfpuOpen", &vfpuOpen, false);
 	sync.Sync("threadsOpen", &threadsOpen, false);
 	sync.Sync("callstackOpen", &callstackOpen, false);
 	sync.Sync("breakpointsOpen", &breakpointsOpen, false);
@@ -1457,6 +1543,7 @@ void ImConfig::SyncConfig(IniFile *ini, bool save) {
 	sync.Sync("geDebuggerOpen", &geDebuggerOpen, false);
 	sync.Sync("geStateOpen", &geStateOpen, false);
 	sync.Sync("schedulerOpen", &schedulerOpen, false);
+	sync.Sync("pixelViewerOpen", &pixelViewerOpen, false);
 	for (int i = 0; i < 4; i++) {
 		char name[64];
 		snprintf(name, sizeof(name), "memory%dOpen", i + 1);
@@ -1465,4 +1552,5 @@ void ImConfig::SyncConfig(IniFile *ini, bool save) {
 
 	sync.SetSection(ini->GetOrCreateSection("Settings"));
 	sync.Sync("displayLatched", &displayLatched, false);
+	sync.Sync("realtimePixelPreview", &realtimePixelPreview, false);
 }
