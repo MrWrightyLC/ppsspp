@@ -53,6 +53,7 @@
 #include "Core/HLE/sceKernelMutex.h"
 #include "Core/HLE/sceUtility.h"
 
+// TODO: move this to some common set
 #ifdef _WIN32
 #undef errno
 #undef ESHUTDOWN
@@ -1131,10 +1132,6 @@ int findFreeMatchingID();
 */
 SceNetAdhocMatchingContext * findMatchingContext(int id);
 
-/*
-* Notify Matching Event Handler
-*/
-void notifyMatchingHandler(SceNetAdhocMatchingContext * context, ThreadMessage * msg, void * opt, u32_le &bufAddr, u32_le &bufLen, u32_le * args);
 // Notifiy Adhocctl Handlers
 void notifyAdhocctlHandlers(u32 flag, u32 error);
 

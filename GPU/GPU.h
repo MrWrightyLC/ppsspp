@@ -108,11 +108,16 @@ struct GPUStatistics {
 		numCachedReplacedTextures = 0;
 		numClutTextures = 0;
 		msProcessingDisplayLists = 0;
-		msRasterizingDepth = 0.0f;
+		msPrepareDepth = 0.0;
+		msCullDepth = 0.0;
+		msRasterizeDepth = 0.0;
+		msRasterTimeAvailable = 0.0;
 		numDepthRasterPrims = 0;
-		numDepthRasterBackface = 0;
+		numDepthRasterEarlySize = 0;
 		numDepthRasterNoPixels = 0;
 		numDepthRasterTooSmall = 0;
+		numDepthRasterZCulled = 0;
+		numDepthEarlyBoxCulled = 0;
 		vertexGPUCycles = 0;
 		otherGPUCycles = 0;
 	}
@@ -152,13 +157,18 @@ struct GPUStatistics {
 	int numCachedReplacedTextures;
 	int numClutTextures;
 	double msProcessingDisplayLists;
-	double msRasterizingDepth;
+	double msPrepareDepth;
+	double msCullDepth;
+	double msRasterizeDepth;
+	double msRasterTimeAvailable;
 	int vertexGPUCycles;
 	int otherGPUCycles;
 	int numDepthRasterPrims;
-	int numDepthRasterBackface;
+	int numDepthRasterEarlySize;
 	int numDepthRasterNoPixels;
 	int numDepthRasterTooSmall;
+	int numDepthRasterZCulled;
+	int numDepthEarlyBoxCulled;
 	// Flip count. Doesn't really belong here.
 	int numFlips;
 };

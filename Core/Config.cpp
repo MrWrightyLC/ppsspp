@@ -139,6 +139,14 @@ const char *DefaultLangRegion() {
 	return defaultLangRegion.c_str();
 }
 
+static int DefaultDepthRaster() {
+#if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(IOS)
+	return (int)DepthRasterMode::LOW_QUALITY;
+#else
+	return (int)DepthRasterMode::DEFAULT;
+#endif
+}
+
 std::string CreateRandMAC() {
 	std::stringstream randStream;
 	srand(time(nullptr));
@@ -616,7 +624,7 @@ static const ConfigSetting graphicsSettings[] = {
 	ConfigSetting("UseGeometryShader", &g_Config.bUseGeometryShader, false, CfgFlag::PER_GAME),
 	ConfigSetting("SkipBufferEffects", &g_Config.bSkipBufferEffects, false, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("DisableRangeCulling", &g_Config.bDisableRangeCulling, false, CfgFlag::PER_GAME | CfgFlag::REPORT),
-	ConfigSetting("DepthRasterMode", &g_Config.iDepthRasterMode, 0, CfgFlag::PER_GAME | CfgFlag::REPORT),
+	ConfigSetting("DepthRasterMode", &g_Config.iDepthRasterMode, &DefaultDepthRaster, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("SoftwareRenderer", &g_Config.bSoftwareRendering, false, CfgFlag::PER_GAME),
 	ConfigSetting("SoftwareRendererJit", &g_Config.bSoftwareRenderingJit, true, CfgFlag::PER_GAME),
 	ConfigSetting("HardwareTransform", &g_Config.bHardwareTransform, true, CfgFlag::PER_GAME | CfgFlag::REPORT),
@@ -1236,6 +1244,10 @@ void Config::Load(const char *iniFileName, const char *controllerIniFilename) {
 		mPostShaderSetting[key] = std::stof(value);
 	}
 
+	const Section *hostOverrideSetting = iniFile.GetOrCreateSection("HostAliases");
+	// TODO: relocate me before PR
+	mHostToAlias = hostOverrideSetting->ToMap();
+
 	// Load post process shader names
 	vPostShaderNames.clear();
 	for (const auto& it : postShaderChain->ToMap()) {
@@ -1366,6 +1378,13 @@ bool Config::Save(const char *saveReason) {
 				snprintf(keyName, sizeof(keyName), "PostShader%d", (int)i+1);
 				postShaderChain->Set(keyName, vPostShaderNames[i]);
 			}
+		}
+
+		// TODO: relocate me before PR
+		Section *hostOverrideSetting = iniFile.GetOrCreateSection("HostAliases");
+		hostOverrideSetting->Clear();
+		for (auto& it : mHostToAlias) {
+			hostOverrideSetting->Set(it.first.c_str(), it.second.c_str());
 		}
 
 		Section *control = iniFile.GetOrCreateSection("Control");
