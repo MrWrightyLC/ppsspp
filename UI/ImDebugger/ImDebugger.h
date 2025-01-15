@@ -11,6 +11,7 @@
 #include "Common/System/Request.h"
 
 #include "Core/Core.h"
+#include "Core/HLE/SocketManager.h"
 
 #include "Core/Debugger/DisassemblyManager.h"
 #include "Core/Debugger/DebugInterface.h"
@@ -140,6 +141,9 @@ struct ImConfig {
 	bool schedulerOpen;
 	bool watchOpen;
 	bool pixelViewerOpen;
+	bool npOpen;
+	bool socketsOpen;
+	bool memDumpOpen;
 	bool memViewOpen[4];
 
 	// HLE explorer settings
@@ -172,6 +176,7 @@ enum class ImCmd {
 	SHOW_IN_GE_DISASM,
 	SHOW_IN_MEMORY_VIEWER,  // param is address, param2 is viewer index
 	SHOW_IN_PIXEL_VIEWER,  // param is address, param2 is stride, |0x80000000 if depth, param3 is w/h
+	SHOW_IN_MEMORY_DUMPER, // param is address, param2 is size, param3 is mode
 };
 
 struct ImCommand {
@@ -208,6 +213,7 @@ private:
 	ImMemWindow mem_[4];  // We support 4 separate instances of the memory viewer.
 	ImStructViewer structViewer_;
 	ImGePixelViewerWindow pixelViewer_;
+	ImMemDumpWindow memDumpWindow_;
 
 	ImSnapshotState newSnapshot_;
 	ImSnapshotState snapshot_;
@@ -223,4 +229,5 @@ private:
 void ImClickableAddress(uint32_t addr, ImControl &control, ImCmd cmd);
 void ShowInWindowMenuItems(uint32_t addr, ImControl &control);
 void ShowInMemoryViewerMenuItem(uint32_t addr, ImControl &control);
+void ShowInMemoryDumperMenuItem(uint32_t addr, uint32_t size, MemDumpMode mode, ImControl &control);
 void StatusBar(std::string_view str);

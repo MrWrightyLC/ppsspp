@@ -700,7 +700,6 @@ static void check_variables(CoreParameter &coreParam)
          g_Config.iInternalResolution = 1;
    }
 
-#if 0 // see issue #16786
    var.key = "ppsspp_mulitsample_level";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
@@ -715,7 +714,6 @@ static void check_variables(CoreParameter &coreParam)
       else if (!strcmp(var.value, "x8"))
          g_Config.iMultiSampleLevel = 3;
    }
-#endif
 
    var.key = "ppsspp_cropto16x9";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -772,11 +770,11 @@ static void check_variables(CoreParameter &coreParam)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
       if (!strcmp(var.value, "No buffer"))
-         g_Config.iInflightFrames = 0;
-      else if (!strcmp(var.value, "Up to 1"))
          g_Config.iInflightFrames = 1;
-      else if (!strcmp(var.value, "Up to 2"))
+      else if (!strcmp(var.value, "Up to 1"))
          g_Config.iInflightFrames = 2;
+      else if (!strcmp(var.value, "Up to 2"))
+         g_Config.iInflightFrames = 3;
    }
 
    var.key = "ppsspp_skip_buffer_effects";
@@ -1143,7 +1141,6 @@ static void check_variables(CoreParameter &coreParam)
          gpu->NotifyDisplayResized();
    }
 
-#if 0 // see issue #16786
    if (g_Config.iMultiSampleLevel != iMultiSampleLevel_prev && PSP_IsInited())
    {
       if (gpu)
@@ -1151,7 +1148,6 @@ static void check_variables(CoreParameter &coreParam)
          gpu->NotifyRenderResized();
       }
    }
-#endif
 
    if (updateAvInfo)
    {
@@ -1488,10 +1484,8 @@ bool retro_load_game(const struct retro_game_info *game)
 
    // Show/hide 'MSAA' and 'Texture Shader' options, Vulkan only
    option_display.visible = (g_Config.iGPUBackend == (int)GPUBackend::VULKAN);
-#if 0 // see issue #16786
    option_display.key = "ppsspp_mulitsample_level";
    environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-#endif
    option_display.key = "ppsspp_texture_shader";
    environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
 

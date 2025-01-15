@@ -811,6 +811,7 @@ add_library(Common STATIC
 	Common/Net/Resolve.h
 	Common/Net/Sinks.cpp
 	Common/Net/Sinks.h
+	Common/Net/SocketCompat.h
 	Common/Net/URL.cpp
 	Common/Net/URL.h
 	Common/Net/WebsocketServer.cpp
@@ -2175,6 +2176,10 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/HLE/AtracCtx.h
 	Core/HLE/AtracCtx2.cpp
 	Core/HLE/AtracCtx2.h
+	Core/HLE/NetInetConstants.cpp
+	Core/HLE/NetInetConstants.h
+	Core/HLE/SocketManager.cpp
+	Core/HLE/SocketManager.h
 	Core/HLE/sceAtrac.cpp
 	Core/HLE/sceAtrac.h
 	Core/HLE/sceAudio.cpp
@@ -2384,12 +2389,6 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/MIPS/MIPSAsm.h
 	Core/MIPS/MIPSTracer.cpp
 	Core/MIPS/MIPSTracer.h
-	Core/Net/InetCommon.cpp
-	Core/Net/InetCommon.h
-	Core/Net/NetResolver.cpp
-	Core/Net/NetResolver.h
-	Core/Net/InetSocket.cpp
-	Core/Net/InetSocket.h
 	Core/MemFault.cpp
 	Core/MemFault.h
 	Core/MemMap.cpp
@@ -2744,6 +2743,7 @@ set(NativeAssets
 	assets/Roboto-Condensed.ttf
 	assets/7z.png
 	assets/compat.ini
+	assets/infra-dns.json
 	assets/gamecontrollerdb.txt
 	assets/langregion.ini
 	assets/ppge_atlas.zim

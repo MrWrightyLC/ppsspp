@@ -570,6 +570,7 @@
     <ClCompile Include="HLE\AtracCtx.cpp" />
     <ClCompile Include="HLE\AtracCtx2.cpp" />
     <ClCompile Include="HLE\KUBridge.cpp" />
+    <ClCompile Include="HLE\NetInetConstants.cpp" />
     <ClCompile Include="HLE\Plugins.cpp" />
     <ClCompile Include="HLE\sceKernelHeap.cpp" />
     <ClCompile Include="HLE\sceNetApctl.cpp" />
@@ -579,6 +580,7 @@
     <ClCompile Include="HLE\sceUsbAcc.cpp" />
     <ClCompile Include="HLE\sceUsbCam.cpp" />
     <ClCompile Include="HLE\sceUsbMic.cpp" />
+    <ClCompile Include="HLE\SocketManager.cpp" />
     <ClCompile Include="HW\Atrac3Standalone.cpp" />
     <ClCompile Include="HW\BufferQueue.cpp" />
     <ClCompile Include="HW\Camera.cpp" />
@@ -628,9 +630,6 @@
     <ClCompile Include="MIPS\x86\X64IRCompSystem.cpp" />
     <ClCompile Include="MIPS\x86\X64IRCompVec.cpp" />
     <ClCompile Include="MIPS\x86\X64IRJit.cpp" />
-    <ClCompile Include="Net\InetCommon.cpp" />
-    <ClCompile Include="Net\InetSocket.cpp" />
-    <ClCompile Include="Net\NetResolver.cpp" />
     <ClCompile Include="Replay.cpp" />
     <ClCompile Include="Compatibility.cpp" />
     <ClCompile Include="Config.cpp" />
@@ -1189,6 +1188,7 @@
     <ClInclude Include="HLE\AtracCtx2.h" />
     <ClInclude Include="HLE\KernelThreadDebugInterface.h" />
     <ClInclude Include="HLE\KUBridge.h" />
+    <ClInclude Include="HLE\NetInetConstants.h" />
     <ClInclude Include="HLE\Plugins.h" />
     <ClInclude Include="HLE\sceKernelHeap.h" />
     <ClInclude Include="HLE\sceNetApctl.h" />
@@ -1198,6 +1198,7 @@
     <ClInclude Include="HLE\sceUsbAcc.h" />
     <ClInclude Include="HLE\sceUsbCam.h" />
     <ClInclude Include="HLE\sceUsbMic.h" />
+    <ClInclude Include="HLE\SocketManager.h" />
     <ClInclude Include="HW\Atrac3Standalone.h" />
     <ClInclude Include="HW\Camera.h" />
     <ClInclude Include="HW\Display.h" />
@@ -1220,9 +1221,6 @@
     <ClInclude Include="MIPS\RiscV\RiscVJit.h" />
     <ClInclude Include="MIPS\RiscV\RiscVRegCache.h" />
     <ClInclude Include="MIPS\x86\X64IRJit.h" />
-    <ClInclude Include="Net\InetCommon.h" />
-    <ClInclude Include="Net\InetSocket.h" />
-    <ClInclude Include="Net\NetResolver.h" />
     <ClInclude Include="Replay.h" />
     <ClInclude Include="Compatibility.h" />
     <ClInclude Include="Config.h" />
@@ -1482,6 +1480,7 @@
     <ClInclude Include="MIPS\x86\X64IRRegCache.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\assets\infra-dns.json" />
     <None Include="..\ext\cityhash\COPYING" />
     <None Include="..\ext\cityhash\README" />
     <None Include="..\ext\gason\LICENSE" />

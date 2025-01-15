@@ -510,9 +510,6 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MIPS/IR/IRNativeCommon.cpp \
   $(SRC)/Core/MIPS/IR/IRPassSimplify.cpp \
   $(SRC)/Core/MIPS/IR/IRRegCache.cpp \
-  $(SRC)/Core/Net/InetCommon.cpp \
-  $(SRC)/Core/Net/InetSocket.cpp \
-  $(SRC)/Core/Net/NetResolver.cpp \
   $(SRC)/GPU/Math3D.cpp \
   $(SRC)/GPU/GPU.cpp \
   $(SRC)/GPU/GPUCommon.cpp \
@@ -665,6 +662,8 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/HLE/ReplaceTables.cpp \
   $(SRC)/Core/HLE/HLE.cpp \
   $(SRC)/Core/HLE/KUBridge.cpp \
+  $(SRC)/Core/HLE/NetInetConstants.cpp \
+  $(SRC)/Core/HLE/SocketManager.cpp \
   $(SRC)/Core/HLE/Plugins.cpp \
   $(SRC)/Core/HLE/sceAdler.cpp \
   $(SRC)/Core/HLE/sceAtrac.cpp \

@@ -19,6 +19,9 @@
 #include "Core/Debugger/SymbolMap.h"
 #include "Core/MemMap.h"
 #include "Core/HLE/HLE.h"
+#include "Core/HLE/SocketManager.h"
+#include "Core/HLE/NetInetConstants.h"
+#include "Core/HLE/sceNp.h"
 #include "Common/System/Request.h"
 
 #include "Core/HLE/sceAtrac.h"
@@ -50,6 +53,12 @@ void ShowInMemoryViewerMenuItem(uint32_t addr, ImControl &control) {
 			}
 		}
 		ImGui::EndMenu();
+	}
+}
+
+void ShowInMemoryDumperMenuItem(uint32_t addr, uint32_t size, MemDumpMode mode, ImControl &control) {
+	if (ImGui::MenuItem(mode == MemDumpMode::Raw ? "Dump bytes to file..." : "Disassemble to file...")) {
+		control.command = { ImCmd::SHOW_IN_MEMORY_DUMPER, addr, size, (u32)mode};
 	}
 }
 
@@ -468,6 +477,69 @@ static void DrawKernelObjects(ImConfig &cfg) {
 			obj->GetQuickInfo(qi, sizeof(qi));
 			ImGui::TextUnformatted(qi);
 			ImGui::PopID();
+		}
+
+		ImGui::EndTable();
+	}
+	ImGui::End();
+}
+
+static void DrawNp(ImConfig &cfg) {
+	if (!ImGui::Begin("NP", &cfg.npOpen)) {
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("Signed in: %d", npSigninState);
+	ImGui::Text("Title ID: %s", npTitleId.data);
+
+	SceNpId id{};
+	NpGetNpId(&id);
+	ImGui::Text("User Handle: %s", id.handle.data);
+	ImGui::End();
+}
+
+static void DrawSockets(ImConfig &cfg) {
+	if (!ImGui::Begin("Sockets", &cfg.socketsOpen)) {
+		ImGui::End();
+		return;
+	}
+	if (ImGui::BeginTable("sock", 7, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersH | ImGuiTableFlags_Resizable)) {
+		ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Host", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Non-blocking", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Created by", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Domain", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn("Protocol", ImGuiTableColumnFlags_WidthStretch);
+
+		ImGui::TableHeadersRow();
+
+		for (int i = SocketManager::MIN_VALID_INET_SOCKET; i < SocketManager::VALID_INET_SOCKET_COUNT; i++) {
+			InetSocket *inetSocket;
+			if (!g_socketManager.GetInetSocket(i, &inetSocket)) {
+				continue;
+			}
+
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::Text("%d", i);
+			ImGui::TableNextColumn();
+			ImGui::Text("%d", (int)inetSocket->sock);
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(inetSocket->nonblocking ? "Non-blocking" : "Blocking");
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(SocketStateToString(inetSocket->state));
+			ImGui::TableNextColumn();
+			std::string str = inetSocketDomain2str(inetSocket->domain);
+			ImGui::TextUnformatted(str.c_str());
+			ImGui::TableNextColumn();
+			str = inetSocketType2str(inetSocket->type);
+			ImGui::TextUnformatted(str.c_str());
+			ImGui::TableNextColumn();
+			str = inetSocketProto2str(inetSocket->protocol);
+			ImGui::TextUnformatted(str.c_str());
+			ImGui::TableNextColumn();
 		}
 
 		ImGui::EndTable();
@@ -1046,6 +1118,7 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 				snprintf(title, sizeof(title), "Memory %d", i + 1);
 				ImGui::MenuItem(title, nullptr, &cfg_.memViewOpen[i]);
 			}
+			ImGui::MenuItem("Memory Dumper", nullptr, &cfg_.memDumpOpen);
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("HLE")) {
@@ -1068,6 +1141,11 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 		if (ImGui::BeginMenu("Audio")) {
 			ImGui::MenuItem("Raw audio channels", nullptr, &cfg_.audioChannelsOpen);
 			ImGui::MenuItem("Decoder contexts", nullptr, &cfg_.audioDecodersOpen);
+			ImGui::EndMenu();
+		}
+		if (ImGui::BeginMenu("Network")) {
+			ImGui::MenuItem("Sockets", nullptr, &cfg_.socketsOpen);
+			ImGui::MenuItem("NP", nullptr, &cfg_.npOpen);
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Tools")) {
@@ -1182,10 +1260,22 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 		pixelViewer_.Draw(cfg_, control, gpuDebug, draw);
 	}
 
+	if (cfg_.memDumpOpen) {
+		memDumpWindow_.Draw(cfg_, mipsDebug);
+	}
+
 	for (int i = 0; i < 4; i++) {
 		if (cfg_.memViewOpen[i]) {
 			mem_[i].Draw(mipsDebug, cfg_, control, i);
 		}
+	}
+
+	if (cfg_.socketsOpen) {
+		DrawSockets(cfg_);
+	}
+
+	if (cfg_.npOpen) {
+		DrawNp(cfg_);
 	}
 
 	// Process UI commands
@@ -1207,6 +1297,13 @@ void ImDebugger::Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebu
 		mem_[index].GotoAddr(control.command.param);
 		cfg_.memViewOpen[index] = true;
 		ImGui::SetWindowFocus(ImMemWindow::Title(index));
+		break;
+	}
+	case ImCmd::SHOW_IN_MEMORY_DUMPER:
+	{
+		cfg_.memDumpOpen = true;
+		memDumpWindow_.SetRange(control.command.param, control.command.param2, (MemDumpMode)control.command.param3);
+		ImGui::SetWindowFocus(memDumpWindow_.Title());
 		break;
 	}
 	case ImCmd::TRIGGER_FIND_POPUP:
@@ -1543,6 +1640,8 @@ void ImConfig::SyncConfig(IniFile *ini, bool save) {
 	sync.Sync("geDebuggerOpen", &geDebuggerOpen, false);
 	sync.Sync("geStateOpen", &geStateOpen, false);
 	sync.Sync("schedulerOpen", &schedulerOpen, false);
+	sync.Sync("socketsOpen", &socketsOpen, false);
+	sync.Sync("npOpen", &npOpen, false);
 	sync.Sync("pixelViewerOpen", &pixelViewerOpen, false);
 	for (int i = 0; i < 4; i++) {
 		char name[64];
