@@ -22,6 +22,9 @@
 #include "Core/MemMapHelpers.h"
 #include "Core/Util/PortManager.h"
 #include "Core/Instance.h"
+#ifdef __MINGW32__
+#include <mswsock.h>
+#endif
 
 // This is the PSP networking errno.
 // TODO: It should probably be thread-local - one value for each PSP thread?
@@ -458,39 +461,51 @@ static int sceNetInetSetsockopt(int socket, int level, int optname, u32 optvalPt
 
 	timeval tval{};
 	// TODO: Ignoring SO_NBIO/SO_NONBLOCK flag if we always use non-blocking mode (ie. simulated blocking mode)
-	if (level == PSP_NET_INET_SOL_SOCKET && optname == PSP_NET_INET_SO_NBIO) {
-		inetSock->nonblocking = optval;
-		return hleLogSuccessI(Log::sceNet, 0);
-	}
-	// FIXME: Should we ignore SO_BROADCAST flag since we are using fake broadcast (ie. only broadcast to friends),
-	//        But Infrastructure/Online play might need to use broadcast for SSDP and to support LAN MP with real PSP
-	/*else if (level == PSP_NET_INET_SOL_SOCKET && optname == PSP_NET_INET_SO_BROADCAST) {
-		//memcpy(&sock->so_broadcast, (int*)optval, std::min(sizeof(sock->so_broadcast), optlen));
-		return hleLogSuccessI(Log::sceNet, 0);
-	}*/
-	// TODO: Ignoring SO_REUSEADDR flag to prevent disrupting multiple-instance feature
-	else if (level == PSP_NET_INET_SOL_SOCKET && optname == PSP_NET_INET_SO_REUSEADDR) {
-		//memcpy(&sock->reuseaddr, (int*)optval, std::min(sizeof(sock->reuseaddr), optlen));
-		return hleLogSuccessI(Log::sceNet, 0);
-	}
-	// TODO: Ignoring SO_REUSEPORT flag to prevent disrupting multiple-instance feature (not sure if PSP has SO_REUSEPORT or not tho, defined as 15 on Android)
-	else if (level == PSP_NET_INET_SOL_SOCKET && optname == PSP_NET_INET_SO_REUSEPORT) { // 15
-		//memcpy(&sock->reuseport, (int*)optval, std::min(sizeof(sock->reuseport), optlen));
-		return hleLogSuccessI(Log::sceNet, 0);
-	}
-	// TODO: Ignoring SO_NOSIGPIPE flag to prevent crashing PPSSPP (not sure if PSP has NOSIGPIPE or not tho, defined as 0x1022 on Darwin)
-	else if (level == PSP_NET_INET_SOL_SOCKET && optname == 0x1022) { // PSP_NET_INET_SO_NOSIGPIPE ?
-		//memcpy(&sock->nosigpipe, (int*)optval, std::min(sizeof(sock->nosigpipe), optlen));
-		return hleLogSuccessI(Log::sceNet, 0);
-	}
-	// It seems UNO game will try to set socket buffer size with a very large size and ended getting error (-1), so we should also limit the buffer size to replicate PSP behavior
-	else if (level == PSP_NET_INET_SOL_SOCKET && (optname == PSP_NET_INET_SO_RCVBUF || optname == PSP_NET_INET_SO_SNDBUF)) { // PSP_NET_INET_SO_NOSIGPIPE ?
-		// TODO: For SOCK_STREAM max buffer size is 8 Mb on BSD, while max SOCK_DGRAM is 65535 minus the IP & UDP Header size
-		if (optval > 8 * 1024 * 1024) {
-			UpdateErrnoFromHost(ENOBUFS, __FUNCTION__); // FIXME: return ENOBUFS for SOCK_STREAM, and EINVAL for SOCK_DGRAM
-			return hleLogError(Log::sceNet, -1, "buffer size too large?");
+	if (level == PSP_NET_INET_SOL_SOCKET) {
+		switch (optname) {
+		case PSP_NET_INET_SO_NBIO:
+			inetSock->nonblocking = optval;
+			return hleLogSuccessI(Log::sceNet, 0);
+		// FIXME: Should we ignore SO_BROADCAST flag since we are using fake broadcast (ie. only broadcast to friends),
+		//        But Infrastructure/Online play might need to use broadcast for SSDP and to support LAN MP with real PSP
+		/*else if (level == PSP_NET_INET_SOL_SOCKET && optname == PSP_NET_INET_SO_BROADCAST) {
+			//memcpy(&sock->so_broadcast, (int*)optval, std::min(sizeof(sock->so_broadcast), optlen));
+			return hleLogSuccessI(Log::sceNet, 0);
+		}*/
+		// TODO: Ignoring SO_REUSEADDR flag to prevent disrupting multiple-instance feature
+		case PSP_NET_INET_SO_REUSEADDR:
+			//memcpy(&sock->reuseaddr, (int*)optval, std::min(sizeof(sock->reuseaddr), optlen));
+			return hleLogSuccessI(Log::sceNet, 0);
+
+		// TODO: Ignoring SO_REUSEPORT flag to prevent disrupting multiple-instance feature (not sure if PSP has SO_REUSEPORT or not tho, defined as 15 on Android)
+		case PSP_NET_INET_SO_REUSEPORT: // 15
+			//memcpy(&sock->reuseport, (int*)optval, std::min(sizeof(sock->reuseport), optlen));
+			return hleLogSuccessI(Log::sceNet, 0);
+
+		// TODO: Ignoring SO_NOSIGPIPE flag to prevent crashing PPSSPP (not sure if PSP has NOSIGPIPE or not tho, defined as 0x1022 on Darwin)
+		case PSP_NET_INET_SO_NOSIGPIPE: // WARNING: Not sure about this one. But we definitely don't want signals, so we ignore it.
+			//memcpy(&sock->nosigpipe, (int*)optval, std::min(sizeof(sock->nosigpipe), optlen));
+			return hleLogWarning(Log::sceNet, 0, "NOSIGPIPE should never be modified (should always be off)");
+
+		// It seems UNO game will try to set socket buffer size with a very large size and ended getting error (-1), so we should also limit the buffer size to replicate PSP behavior
+		case PSP_NET_INET_SO_RCVBUF:
+		case PSP_NET_INET_SO_SNDBUF: // PSP_NET_INET_SO_NOSIGPIPE ?
+			// TODO: For SOCK_STREAM max buffer size is 8 Mb on BSD, while max SOCK_DGRAM is 65535 minus the IP & UDP Header size
+			if (optval > 8 * 1024 * 1024) {
+				UpdateErrnoFromHost(ENOBUFS, __FUNCTION__); // FIXME: return ENOBUFS for SOCK_STREAM, and EINVAL for SOCK_DGRAM
+				return hleLogError(Log::sceNet, -1, "buffer size too large?");
+			}
+			break;
+
+		case PSP_NET_INET_SO_ONESBCAST:
+			// Seen in Outrun 2006 (account registration), assuming that the flag mapping is correct, we can't support this. So we warn-log and pretend success.
+			return hleLogWarning(Log::sceNet, 0, "PSP_NET_INET_SO_ONESBCAST unsupported, ignoring");
+
+		default:
+			break;
 		}
 	}
+
 	int retval = 0;
 	// PSP timeout are a single 32bit value (micro seconds)
 	if (level == PSP_NET_INET_SOL_SOCKET && optval && (optname == PSP_NET_INET_SO_RCVTIMEO || optname == PSP_NET_INET_SO_SNDTIMEO)) {
@@ -992,7 +1007,7 @@ static int sceNetInetSendmsg(int socket, u32 msghdrPtr, int flags) {
 		// Note: Many existing implementations of CMSG_FIRSTHDR never look at msg_controllen and just return the value of cmsg_control.
 		if (pspMsghdr->msg_controllen >= sizeof(InetCmsghdr)) {
 			// TODO: Creates our own CMSG_* macros (32-bit version of it, similar to the one on PSP) to avoid alignment/size issue that can lead to memory corruption/out of bound issue.
-			for (WSACMSGHDR* cmsgptr = CMSG_FIRSTHDR(&hdr); cmsgptr != NULL; cmsgptr = CMSG_NXTHDR(&hdr, cmsgptr)) {
+			for (WSACMSGHDR* cmsgptr = WSA_CMSG_FIRSTHDR(&hdr); cmsgptr != NULL; cmsgptr = WSA_CMSG_NXTHDR(&hdr, cmsgptr)) {
 				cmsgptr->cmsg_type = convertCMsgTypePSP2Host(cmsgptr->cmsg_type, cmsgptr->cmsg_level);
 				cmsgptr->cmsg_level = convertSockoptLevelPSP2Host(cmsgptr->cmsg_level);
 			}

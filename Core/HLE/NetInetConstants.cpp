@@ -6,6 +6,9 @@
 #include "Core/HLE/NetInetConstants.h"
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/HLE.h"
+#ifdef __MINGW32__
+#include <mswsock.h>
+#endif
 
 int convertMsgFlagPSP2Host(int flag) {
 	switch (flag) {
@@ -563,7 +566,7 @@ int convertSockoptNamePSP2Host(int optname, int level) {
 #endif
 		}
 	}
-	return hleLogError(Log::sceNet, optname, "Unknown PSP's SockOpt Name (Level = %08x)", level);
+	return hleLogError(Log::sceNet, optname, "Unknown or unsupported PSP's SockOpt Name (Level = %08x)", level);
 }
 
 int convertSockoptNameHost2PSP(int optname, int level) {

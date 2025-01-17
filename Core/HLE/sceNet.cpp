@@ -52,11 +52,6 @@
 #include "Core/HLE/sceNetInet.h"
 #include "Core/HLE/sceNetResolver.h"
 
-#if PPSSPP_PLATFORM(SWITCH) && !defined(INADDR_NONE)
-// Missing toolchain define
-#define INADDR_NONE 0xFFFFFFFF
-#endif
-
 bool netInited;
 
 u32 netDropRate = 0;
@@ -66,8 +61,6 @@ u32 netThread1Addr = 0;
 u32 netThread2Addr = 0;
 
 static struct SceNetMallocStat netMallocStat;
-
-static std::map<int, NetResolver> netResolvers;
 
 static std::map<int, ApctlHandler> apctlHandlers;
 
@@ -163,6 +156,8 @@ void AfterApctlMipsCall::SetData(int HandlerID, int OldState, int NewState, int 
 bool LoadDNSForGameID(std::string_view gameID, InfraDNSConfig *dns) {
 	using namespace json;
 
+	*dns = {};
+
 	// TODO: Load from cache instead of zip (if possible), and sometimes update it.
 	size_t jsonSize;
 	std::unique_ptr<uint8_t[]> data(g_VFS.ReadFile("infra-dns.json", &jsonSize));
@@ -181,7 +176,16 @@ bool LoadDNSForGameID(std::string_view gameID, InfraDNSConfig *dns) {
 	const JsonGet def = root.getDict("default");
 
 	// Load the default DNS.
-	dns->dns = def.getStringOr("dns", "");;
+	if (def) {
+		dns->dns = def.getStringOr("dns", "");
+		if (def.hasChild("revival_credits", JSON_OBJECT)) {
+			const JsonGet revived = def.getDict("revival_credits");
+			if (revived) {
+				dns->revivalTeam = revived.getStringOr("group", "");
+				dns->revivalTeamURL = revived.getStringOr("url", "");
+			}
+		}
+	}
 
 	const JsonNode *games = root.getArray("games");
 	for (const JsonNode *iter : games->value) {
@@ -190,7 +194,7 @@ bool LoadDNSForGameID(std::string_view gameID, InfraDNSConfig *dns) {
 		const JsonNode *workingIdsNode = game.getArray("known_working_ids");
 		const JsonNode *otherIdsNode = game.getArray("other_ids");
 		const JsonNode *notWorkingIdsNode = game.getArray("not_working_ids");
-		if (!workingIdsNode) {
+		if (!workingIdsNode && !otherIdsNode && !notWorkingIdsNode) {
 			// We ignore this game.
 			continue;
 		}
@@ -198,12 +202,14 @@ bool LoadDNSForGameID(std::string_view gameID, InfraDNSConfig *dns) {
 		bool found = false;
 
 		std::vector<std::string> ids;
-		JsonGet(workingIdsNode->value).getStringVector(&ids);
-		for (auto &id : ids) {
-			if (id == gameID) {
-				found = true;
-				dns->state = InfraGameState::Working;
-				break;
+		if (workingIdsNode) {
+			JsonGet(workingIdsNode->value).getStringVector(&ids);
+			for (auto &id : ids) {
+				if (id == gameID) {
+					found = true;
+					dns->state = InfraGameState::Working;
+					break;
+				}
 			}
 		}
 		if (!found && notWorkingIdsNode) {
@@ -218,7 +224,7 @@ bool LoadDNSForGameID(std::string_view gameID, InfraDNSConfig *dns) {
 			}
 		}
 		if (!found && otherIdsNode) {
-			// Check the "other" array, not sure what we do with these.
+			// Check the "other" array, we're gonna try this, but less confidently :P
 			JsonGet(otherIdsNode->value).getStringVector(&ids);
 			for (auto &id : ids) {
 				if (id == gameID) {
@@ -242,6 +248,14 @@ bool LoadDNSForGameID(std::string_view gameID, InfraDNSConfig *dns) {
 				std::string domain = std::string(iter->key);
 				std::string ipAddr = std::string(iter->value.toString());
 				dns->fixedDNS[domain] = ipAddr;
+			}
+		}
+
+		if (game.hasChild("revival_credits", JSON_OBJECT)) {
+			const JsonGet revived = game.getDict("revival_credits");
+			if (revived) {
+				dns->revivalTeam = revived.getStringOr("group", "");
+				dns->revivalTeamURL = revived.getStringOr("url", "");
 			}
 		}
 
@@ -386,7 +400,7 @@ void __NetShutdown() {
 	// Network Cleanup
 	Net_Term();
 
-	SceNetResolver::Shutdown();
+	__NetResolverShutdown();
 	__NetInetShutdown();
 	__NetApctlShutdown();
 	__ResetInitNetLib();
@@ -481,7 +495,7 @@ void __NetDoState(PointerWrap &p) {
 		// Discard leftover events
 		apctlEvents.clear();
 		// Discard created resolvers for now (since i'm not sure whether the information in the struct is sufficient or not, and we don't support multi-threading yet anyway)
-		SceNetResolver::Shutdown();
+		__NetResolverShutdown();
 	}
 }
 
@@ -975,10 +989,10 @@ void NetApctl_InitInfo(int confId) {
 	// The reason we need autoconfig is that private Servers may need to use custom DNS Server - and most games are now
 	// best played on private servers (only a few official ones remain, if any).
 	if (g_Config.bInfrastructureAutoDNS) {
-		INFO_LOG(Log::sceNet, "Responding to game query with AutoDNS address");
+		INFO_LOG(Log::sceNet, "Responding to game query with AutoDNS address: %s", g_infraDNSConfig.dns.c_str());
 		truncate_cpy(netApctlInfo.primaryDns, sizeof(netApctlInfo.primaryDns), g_infraDNSConfig.dns);
 	} else {
-		INFO_LOG(Log::sceNet, "Responding to game query with manual DNS address");
+		INFO_LOG(Log::sceNet, "Responding to game query with manual DNS address: %s", g_Config.sInfrastructureDNSServer.c_str());
 		truncate_cpy(netApctlInfo.primaryDns, sizeof(netApctlInfo.primaryDns), g_Config.sInfrastructureDNSServer);
 	}
 
