@@ -109,7 +109,7 @@ private:
 };
 
 extern bool netInited;
-extern bool netApctlInited;
+extern bool g_netApctlInited;
 extern u32 netApctlState;
 extern SceNetApctlInfoInternal netApctlInfo;
 extern std::string defaultNetConfigName;
@@ -127,8 +127,9 @@ void __NetDoState(PointerWrap &p);
 
 int NetApctl_GetState();
 
+bool __NetApctlConnected();
+
 int sceNetApctlConnect(int connIndex);
-int sceNetApctlTerm();
 
 // These return false if allowed to be consistent with the similar function for achievements.
 bool NetworkWarnUserIfOnlineAndCantSavestate();
@@ -155,6 +156,8 @@ struct InfraDNSConfig {
 
 	std::string revivalTeam;
 	std::string revivalTeamURL;
+
+	bool connectAdHocForGrouping;
 };
 
 extern InfraDNSConfig g_infraDNSConfig;

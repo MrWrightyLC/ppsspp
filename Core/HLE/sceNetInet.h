@@ -117,7 +117,7 @@ class PointerWrap;
 
 extern bool netInited;
 extern bool netInetInited;
-extern bool netApctlInited;
+extern bool g_netApctlInited;
 extern u32 netApctlState;
 extern SceNetApctlInfoInternal netApctlInfo;
 extern std::string defaultNetConfigName;
@@ -131,5 +131,4 @@ int NetApctl_GetState();
 
 int sceNetApctlConnect(int connIndex);
 int sceNetInetPoll(u32 fdsPtr, u32 nfds, int timeout);
-int sceNetApctlTerm();
 int sceNetApctlDisconnect();
