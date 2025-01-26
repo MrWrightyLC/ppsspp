@@ -700,9 +700,12 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		break;
 	case VIRTKEY_FASTFORWARD:
 		if (down && !NetworkWarnUserIfOnlineAndCantSpeed()) {
+			/*
+			// This seems like strange behavior. Commented it out.
 			if (coreState == CORE_STEPPING_CPU) {
 				Core_Resume();
 			}
+			*/
 			PSP_CoreParameter().fastForward = true;
 		} else {
 			PSP_CoreParameter().fastForward = false;
@@ -939,7 +942,7 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		break;
 	case VIRTKEY_TOGGLE_WLAN:
 		// Let's not allow the user to toggle wlan while connected, could get confusing.
-		if (down && !netInited) {
+		if (down && !g_netInited) {
 			auto n = GetI18NCategory(I18NCat::NETWORKING);
 			auto di = GetI18NCategory(I18NCat::DIALOG);
 			g_Config.bEnableWlan = !g_Config.bEnableWlan;
@@ -1023,16 +1026,34 @@ bool EmuScreen::UnsyncKey(const KeyInput &key) {
 			// Enable gamepad controls while running imgui (but ignore mouse/keyboard).
 			switch (key.deviceId) {
 			case DEVICE_ID_KEYBOARD:
+				if (!ImGui::GetIO().WantCaptureKeyboard) {
+					controlMapper_.Key(key, &pauseTrigger_);
+				}
+				break;
 			case DEVICE_ID_MOUSE:
+				if (!ImGui::GetIO().WantCaptureMouse) {
+					controlMapper_.Key(key, &pauseTrigger_);
+				}
 				break;
 			default:
 				controlMapper_.Key(key, &pauseTrigger_);
+				break;
 			}
 		}
 
 		return UIScreen::UnsyncKey(key);
 	}
 	return controlMapper_.Key(key, &pauseTrigger_);
+}
+
+void EmuScreen::UnsyncAxis(const AxisInput *axes, size_t count) {
+	System_Notify(SystemNotification::ACTIVITY);
+
+	if (UI::IsFocusMovementEnabled()) {
+		return UIScreen::UnsyncAxis(axes, count);
+	}
+
+	return controlMapper_.Axis(axes, count);
 }
 
 bool EmuScreen::key(const KeyInput &key) {
@@ -1060,16 +1081,6 @@ void EmuScreen::touch(const TouchInput &touch) {
 	} else {
 		UIScreen::touch(touch);
 	}
-}
-
-void EmuScreen::UnsyncAxis(const AxisInput *axes, size_t count) {
-	System_Notify(SystemNotification::ACTIVITY);
-
-	if (UI::IsFocusMovementEnabled()) {
-		return UIScreen::UnsyncAxis(axes, count);
-	}
-
-	return controlMapper_.Axis(axes, count);
 }
 
 class GameInfoBGView : public UI::InertView {
@@ -1876,7 +1887,7 @@ void EmuScreen::resized() {
 }
 
 bool MustRunBehind() {
-	return netInited || __NetAdhocConnected();
+	return IsNetworkConnected();
 }
 
 bool ShouldRunBehind() {

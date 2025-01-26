@@ -159,6 +159,9 @@ bool isPTPPortInUse(uint16_t port, bool forListen, SceNetEtherAddr* dstmac, uint
 std::string ip2str(in_addr in, bool maskPublicIP) {
 	char str[INET_ADDRSTRLEN] = "...";
 	u8* ipptr = (u8*)&in;
+#ifdef _DEBUG
+	maskPublicIP = false;
+#endif
 	if (maskPublicIP && !isPrivateIP(in.s_addr))
 		snprintf(str, sizeof(str), "%u.%u.xx.%u", ipptr[0], ipptr[1], ipptr[3]);
 	else
@@ -2437,3 +2440,14 @@ const char* getMatchingOpcodeStr(int code) {
 	return buf;
 }
 
+const char *AdhocCtlStateToString(int state) {
+	switch (state) {
+	case ADHOCCTL_STATE_DISCONNECTED: return "DISCONNECTED";
+	case ADHOCCTL_STATE_CONNECTED: return "CONNECTED";
+	case ADHOCCTL_STATE_SCANNING: return "SCANNING";
+	case ADHOCCTL_STATE_GAMEMODE: return "GAMEMODE";
+	case ADHOCCTL_STATE_DISCOVER: return "DISCOVER";
+	case ADHOCCTL_STATE_WOL: return "WOL";
+	default: return "(unk)";
+	}
+}

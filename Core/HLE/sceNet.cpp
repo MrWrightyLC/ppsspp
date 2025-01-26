@@ -23,6 +23,7 @@
 #include "Common/Data/Text/Parsers.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/File/VFS/VFS.h"
+#include "Common/File/FileUtil.h"
 #include "Common/System/OSD.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
@@ -52,7 +53,7 @@
 #include "Core/HLE/sceNetInet.h"
 #include "Core/HLE/sceNetResolver.h"
 
-bool netInited;
+bool g_netInited;
 
 u32 netDropRate = 0;
 u32 netDropDuration = 0;
@@ -64,8 +65,9 @@ static struct SceNetMallocStat netMallocStat;
 
 static std::map<int, ApctlHandler> apctlHandlers;
 
-std::string defaultNetConfigName = "NetConf";
-std::string defaultNetSSID = "Wifi"; // fake AP/hotspot
+const char * const defaultNetConfigName = "NetConf";
+const char * const defaultNetSSID = "Wifi"; // fake AP/hotspot
+
 int netApctlInfoId = 0;
 SceNetApctlInfoInternal netApctlInfo;
 
@@ -88,8 +90,13 @@ int NetApctl_Term();
 void NetApctl_InitDefaultInfo();
 void NetApctl_InitInfo(int confId);
 
+bool IsNetworkConnected() {
+	// TODO: Tweak this.
+	return __NetApctlConnected() || __NetAdhocConnected();
+}
+
 bool NetworkWarnUserIfOnlineAndCantSavestate() {
-	if (netInited && !g_Config.bAllowSavestateWhileConnected) {
+	if (IsNetworkConnected() && !g_Config.bAllowSavestateWhileConnected) {
 		auto nw = GetI18NCategory(I18NCat::NETWORKING);
 		g_OSD.Show(OSDType::MESSAGE_INFO, nw->T("Save states are not available when online"), 3.0f, "saveonline");
 		return true;
@@ -99,7 +106,7 @@ bool NetworkWarnUserIfOnlineAndCantSavestate() {
 }
 
 bool NetworkWarnUserIfOnlineAndCantSpeed() {
-	if (netInited) {
+	if (IsNetworkConnected()) {
 		auto nw = GetI18NCategory(I18NCat::NETWORKING);
 		g_OSD.Show(OSDType::MESSAGE_INFO, nw->T("Speed controls are not available when online"), 3.0f, "speedonline");
 		return true;
@@ -109,11 +116,11 @@ bool NetworkWarnUserIfOnlineAndCantSpeed() {
 }
 
 bool NetworkAllowSpeedControl() {
-	return !netInited;
+	return !IsNetworkConnected();
 }
 
 bool NetworkAllowSaveState() {
-	return !netInited || g_Config.bAllowSavestateWhileConnected;
+	return !IsNetworkConnected() || g_Config.bAllowSavestateWhileConnected;
 }
 
 void AfterApctlMipsCall::DoState(PointerWrap & p) {
@@ -153,19 +160,11 @@ void AfterApctlMipsCall::SetData(int HandlerID, int OldState, int NewState, int 
 	argsAddr = ArgsAddr;
 }
 
-bool LoadDNSForGameID(std::string_view gameID, InfraDNSConfig *dns) {
+bool LoadDNSForGameID(std::string_view gameID, std::string_view jsonStr, InfraDNSConfig *dns) {
 	using namespace json;
 
 	*dns = {};
 
-	// TODO: Load from cache instead of zip (if possible), and sometimes update it.
-	size_t jsonSize;
-	std::unique_ptr<uint8_t[]> data(g_VFS.ReadFile("infra-dns.json", &jsonSize));
-	if (!data) {
-		return false;
-	}
-
-	std::string_view jsonStr = std::string_view((const char *)data.get(), jsonSize);
 	json::JsonReader reader(jsonStr.data(), jsonStr.length());
 	if (!reader.ok() || !reader.root()) {
 		ERROR_LOG(Log::IO, "Error parsing DNS JSON");
@@ -202,10 +201,13 @@ bool LoadDNSForGameID(std::string_view gameID, InfraDNSConfig *dns) {
 
 		bool found = false;
 
+		std::vector<std::string> workingIDs;
+
 		std::vector<std::string> ids;
 		if (workingIdsNode) {
 			JsonGet(workingIdsNode->value).getStringVector(&ids);
 			for (auto &id : ids) {
+				workingIDs.push_back(id);
 				if (id == gameID) {
 					found = true;
 					dns->state = InfraGameState::Working;
@@ -240,6 +242,7 @@ bool LoadDNSForGameID(std::string_view gameID, InfraDNSConfig *dns) {
 			continue;
 		}
 
+		dns->workingIDs = workingIDs;
 		dns->gameName = game.getStringOr("name", "");
 		dns->dns = game.getStringOr("dns", dns->dns.c_str());
 		dns->dyn_dns = game.getStringOr("dyn_dns", "");
@@ -265,6 +268,122 @@ bool LoadDNSForGameID(std::string_view gameID, InfraDNSConfig *dns) {
 		break;
 	}
 
+	dns->loaded = true;
+	return true;
+}
+
+static bool LoadAutoDNS(std::string_view json) {
+	if (!g_Config.bInfrastructureAutoDNS) {
+		return true;
+	}
+
+	// Load the automatic DNS config for this game - or the defaults.
+	std::string discID = g_paramSFO.GetDiscID();
+	if (!LoadDNSForGameID(discID, json, &g_infraDNSConfig)) {
+		return false;
+	}
+
+	// If dyn_dns is non-empty, try to use it to replace the specified DNS.
+	// If fails, we just use the dns. TODO: Do this in the background somehow...
+	const auto &dns = g_infraDNSConfig.dns;
+	const auto &dyn_dns = g_infraDNSConfig.dyn_dns;
+	if (!dyn_dns.empty()) {
+		// Try to look it up in system DNS
+		INFO_LOG(Log::sceNet, "DynDNS requested, trying to resolve '%s'...", dyn_dns.c_str());
+		addrinfo *resolved = nullptr;
+		std::string err;
+		if (!net::DNSResolve(dyn_dns, "", &resolved, err)) {
+			ERROR_LOG(Log::sceNet, "Error resolving, falling back to '%s'", dns.c_str());
+		} else if (resolved) {
+			bool found = false;
+			for (auto ptr = resolved; ptr && !found; ptr = ptr->ai_next) {
+				switch (ptr->ai_family) {
+				case AF_INET:
+				{
+					char ipstr[256];
+					if (inet_ntop(ptr->ai_family, &(((struct sockaddr_in*)ptr->ai_addr)->sin_addr), ipstr, sizeof(ipstr)) != 0) {
+						INFO_LOG(Log::sceNet, "Successfully resolved '%s' to '%s', overriding DNS.", dyn_dns.c_str(), ipstr);
+						if (g_infraDNSConfig.dns != ipstr) {
+							WARN_LOG(Log::sceNet, "Replacing specified DNS IP %s with dyndns %s!", g_infraDNSConfig.dns.c_str(), ipstr);
+							g_infraDNSConfig.dns = ipstr;
+						} else {
+							INFO_LOG(Log::sceNet, "DynDNS: %s already up to date", g_infraDNSConfig.dns.c_str());
+						}
+						found = true;
+					}
+					break;
+				}
+				}
+			}
+			net::DNSResolveFree(resolved);
+		}
+	}
+	return true;
+}
+
+std::shared_ptr<http::Request> g_infraDL;
+
+static const std::string_view jsonUrl = "http://metadata.ppsspp.org/infra-dns.json";
+
+void StartInfraJsonDownload() {
+	if (!g_Config.bInfrastructureAutoDNS) {
+		return;
+	}
+
+	if (g_infraDL) {
+		INFO_LOG(Log::sceNet, "json is already being downloaded");
+	}
+	const char *acceptMime = "application/json, text/*; q=0.9, */*; q=0.8";
+	g_infraDL = g_DownloadManager.StartDownload(jsonUrl, Path(), http::RequestFlags::Cached24H, acceptMime);
+}
+
+bool PollInfraJsonDownload(std::string *jsonOutput) {
+	if (!g_Config.bInfrastructureAutoDNS) {
+		return true;
+	}
+
+	if (!g_infraDL) {
+		INFO_LOG(Log::sceNet, "No json download going on");
+		return false;
+	}
+
+	if (!g_infraDL->Done()) {
+		return false;
+	}
+
+	// The request is done, but did it fail?
+	if (g_infraDL->Failed()) {
+		// First, fall back to cache if it exists. Could build this functionality into the download manager
+		// but it would be a bit awkward.
+		std::string json;
+		if (File::ReadBinaryFileToString(g_DownloadManager.UrlToCachePath(jsonUrl), &json) && !json.empty()) {
+			WARN_LOG(Log::sceNet, "Failed to download infra-dns.json, falling back to cached file");
+			*jsonOutput = json;
+			return true;
+		}
+
+		// If it doesn't, let's just grab the assets file. Because later this will mean that we didn't even get the cached copy.
+		size_t jsonSize = 0;
+		std::unique_ptr<uint8_t[]> jsonStr(g_VFS.ReadFile("infra-dns.json", &jsonSize));
+		if (!jsonStr) {
+			jsonOutput->clear();
+			return true;  // A clear output but returning true means something vent very wrong.
+		}
+		*jsonOutput = std::string((const char *)jsonStr.get(), jsonSize);
+		return true;
+	}
+
+	// OK, we actually got data. Load it!
+	g_infraDL->buffer().TakeAll(jsonOutput);
+	if (jsonOutput->empty()) {
+		_dbg_assert_msg_(false, "Json output is empty!");
+		ERROR_LOG(Log::sceNet, "JSON output is empty! Something went wrong.");
+	}
+
+	if (!LoadAutoDNS(*jsonOutput)) {
+		// If the JSON parse fails, throw away the cache file at least.
+		File::Delete(g_DownloadManager.UrlToCachePath(jsonUrl));
+	}
 	return true;
 }
 
@@ -343,7 +462,7 @@ void __NetApctlInit() {
 }
 
 static void __ResetInitNetLib() {
-	netInited = false;
+	g_netInited = false;
 	netInetInited = false; // shouldn't this actually do something?
 
 	memset(&netMallocStat, 0, sizeof(netMallocStat));
@@ -435,11 +554,11 @@ void __NetDoState(PointerWrap &p) {
 	if (!s)
 		return;
 
-	auto cur_netInited = netInited;
+	auto cur_netInited = g_netInited;
 	auto cur_netInetInited = netInetInited;
 	auto cur_netApctlInited = g_netApctlInited;
 
-	Do(p, netInited);
+	Do(p, g_netInited);
 	Do(p, netInetInited);
 	Do(p, g_netApctlInited);
 	Do(p, apctlHandlers);
@@ -492,7 +611,7 @@ void __NetDoState(PointerWrap &p) {
 		// Let's not change "Inited" value when Loading SaveState in the middle of multiplayer to prevent memory & port leaks
 		g_netApctlInited = cur_netApctlInited;
 		netInetInited = cur_netInetInited;
-		netInited = cur_netInited;
+		g_netInited = cur_netInited;
 
 		// Discard leftover events
 		apctlEvents.clear();
@@ -673,7 +792,7 @@ u32 Net_Term() {
 	//NetInet_Term();
 
 	// Library is initialized
-	if (netInited) {
+	if (g_netInited) {
 		// Delete Adhoc Sockets
 		deleteAllAdhocSockets();
 
@@ -691,7 +810,7 @@ u32 Net_Term() {
 	FreeUser(netPoolAddr);
 	FreeUser(netThread1Addr);
 	FreeUser(netThread2Addr);
-	netInited = false;
+	g_netInited = false;
 
 	g_infraDNSConfig = {};
 	return 0;
@@ -699,7 +818,6 @@ u32 Net_Term() {
 
 static u32 sceNetTerm() {
 	auto n = GetI18NCategory(I18NCat::NETWORKING);
-	g_OSD.Show(OSDType::MESSAGE_INFO, n->T("Network shutdown"), 2.0, "networkinit");
 
 	int retval = Net_Term();
 
@@ -720,7 +838,7 @@ static int sceNetInit(u32 poolSize, u32 calloutPri, u32 calloutStack, u32 netini
 	// TODO: Create Network Threads using given priority & stack
 	// TODO: The correct behavior is actually to allocate more and leak the other threads/pool.
 	// But we reset here for historic reasons (GTA:VCS potentially triggers this.)
-	if (netInited) {
+	if (g_netInited) {
 		// This cleanup attempt might not worked when SaveState were loaded in the middle of multiplayer game and re-entering multiplayer, thus causing memory leaks & wasting binded ports.
 		// Maybe we shouldn't save/load "Inited" vars on SaveState?
 		Net_Term();
@@ -763,63 +881,10 @@ static int sceNetInit(u32 poolSize, u32 calloutPri, u32 calloutStack, u32 netini
 	// Clear Socket Translator Memory
 	memset(&adhocSockets, 0, sizeof(adhocSockets));
 
-	if (g_Config.bInfrastructureAutoDNS) {
-		// Load the automatic DNS config for this game - or the defaults.
-		std::string discID = g_paramSFO.GetDiscID();
-		LoadDNSForGameID(discID, &g_infraDNSConfig);
-
-		// If dyn_dns is non-empty, try to use it to replace the specified DNS.
-		// If fails, we just use the dns. TODO: Do this in the background somehow...
-		const auto &dns = g_infraDNSConfig.dns;
-		const auto &dyn_dns = g_infraDNSConfig.dyn_dns;
-		if (!dyn_dns.empty()) {
-			// Try to look it up in system DNS
-			INFO_LOG(Log::sceNet, "DynDNS requested, trying to resolve '%s'...", dyn_dns.c_str());
-			addrinfo *resolved = nullptr;
-			std::string err;
-			if (!net::DNSResolve(dyn_dns, "", &resolved, err)) {
-				ERROR_LOG(Log::sceNet, "Error resolving, falling back to '%s'", dns.c_str());
-			} else if (resolved) {
-				bool found = false;
-				for (auto ptr = resolved; ptr && !found; ptr = ptr->ai_next) {
-					switch (ptr->ai_family) {
-					case AF_INET:
-					{
-						char ipstr[256];
-						if (inet_ntop(ptr->ai_family, &(((struct sockaddr_in*)ptr->ai_addr)->sin_addr), ipstr, sizeof(ipstr)) != 0) {
-							INFO_LOG(Log::sceNet, "Successfully resolved '%s' to '%s', overriding DNS.", dyn_dns.c_str(), ipstr);
-							if (g_infraDNSConfig.dns != ipstr) {
-								WARN_LOG(Log::sceNet, "Replacing specified DNS IP %s with dyndns %s!", g_infraDNSConfig.dns.c_str(), ipstr);
-								g_infraDNSConfig.dns = ipstr;
-							} else {
-								INFO_LOG(Log::sceNet, "DynDNS: %s already up to date", g_infraDNSConfig.dns.c_str());
-							}
-							found = true;
-						}
-						break;
-					}
-					}
-				}
-				net::DNSResolveFree(resolved);
-			}
-		}
-	}
-
-	netInited = true;
+	g_netInited = true;
 
 	auto n = GetI18NCategory(I18NCat::NETWORKING);
 
-	std::string msg(n->T("Network initialized"));
-	if (!msg.empty()) {
-		if (g_Config.bInfrastructureAutoDNS) {
-			msg += ": ";
-			msg += n->T("Auto DNS");
-			if (!g_infraDNSConfig.gameName.empty()) {
-				msg += " (" + g_infraDNSConfig.gameName + ")";
-			}
-		}
-		g_OSD.Show(OSDType::MESSAGE_INFO, msg, 2.0, "networkinit");
-	}
 	return hleLogSuccessI(Log::sceNet, 0);
 }
 
@@ -974,7 +1039,7 @@ void NetApctl_InitInfo(int confId) {
 	truncate_cpy(netApctlInfo.name, sizeof(netApctlInfo.name), defaultNetConfigName + std::to_string(confId));
 	truncate_cpy(netApctlInfo.ssid, sizeof(netApctlInfo.ssid), defaultNetSSID);
 	memcpy(netApctlInfo.bssid, "\1\1\2\2\3\3", sizeof(netApctlInfo.bssid)); // fake AP's mac address
-	netApctlInfo.ssidLength = static_cast<unsigned int>(defaultNetSSID.length());
+	netApctlInfo.ssidLength = static_cast<unsigned int>(strlen(defaultNetSSID));
 	netApctlInfo.strength = 99;
 	netApctlInfo.channel = g_Config.iWlanAdhocChannel;
 	if (netApctlInfo.channel == PSP_SYSTEMPARAM_ADHOC_CHANNEL_AUTOMATIC) netApctlInfo.channel = defaultWlanChannel;
